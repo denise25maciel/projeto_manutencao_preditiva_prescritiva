@@ -100,10 +100,31 @@ COLUNAS_VAZAMENTO = [COLUNA_ID, COLUNA_TEMPO]
 INTERVALO_ESPERADO_S = 2.0
 TOLERANCIA_INTERVALO_S = 0.25  # +-0.25s ainda conta como cadencia nominal
 
-# Acima disso consideramos que houve corte: fim de uma sessao e inicio de outra.
-# Usado para quebrar episodios (Parte 1) e para nao medir "taxa de amostragem"
-# atravessando a fronteira entre sessoes.
+# Acima disso consideramos que houve corte entre CAMPANHAS de coleta. Usado para
+# nao medir "taxa de amostragem" atravessando a fronteira, e para quebrar a linha
+# dos graficos de serie temporal.
 GAP_NOVA_SESSAO_S = 60.0
+
+# Corte que separa um ENSAIO do seguinte — a fronteira do episodio (Parte 1).
+# Menor que o de campanha de proposito: o operador leva de 20 a 45 s trocando o
+# arranjo da bancada entre dois ensaios, e com 60 s dois ensaios consecutivos do
+# mesmo rotulo ficariam colados.
+#
+# O numero nao e chute. Olhando os intervalos entre leituras do mesmo rotulo, os
+# dados tem uma faixa COMPLETAMENTE VAZIA:
+#
+#     maior intervalo de coleta normal :  6,000 s
+#     menor pausa de verdade           : 16,085 s
+#     entre os dois: 0 ocorrencias em 166.591 intervalos
+#
+# Qualquer corte dentro dessa faixa produz os mesmos 570 episodios — testado com
+# 8, 10, 12 e 15 s. Abaixo de 6 s a cadencia de 5,3 s se parte (11 mil episodios);
+# acima de 16 s comecam a se fundir ensaios distintos (366 episodios com 60 s).
+#
+# Escolhemos 10 s por ser o centro da faixa vazia: maior margem dos dois lados se
+# uma coleta futura tiver ritmo um pouco diferente.
+# Justificativa completa na tela "Qualidade dos Dados", secao 2.
+GAP_NOVO_EPISODIO_S = 10.0
 
 # Teto de pontos enviados ao navegador num grafico de serie temporal. Acima
 # disso a serie e reamostrada por blocos (mediana + faixa min-max), o que

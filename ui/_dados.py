@@ -32,6 +32,7 @@ from mp.ingestion import (  # noqa: E402
     matriz_campos,
 )
 from mp.analysis import (  # noqa: E402
+    analise_intervalos,
     assinatura_de_rotulo,
     assinaturas_por_rotulo,
     carregar,
@@ -134,6 +135,12 @@ def r_outliers_do_rotulo(rotulo: str):
 @st.cache_data(**CACHE)
 def r_tempos_duplicados():
     return timestamps_duplicados(dados())
+
+
+@st.cache_data(**CACHE)
+def r_intervalos():
+    """Analise que justifica onde cortar um episodio."""
+    return analise_intervalos(dados())
 
 
 @st.cache_data(**CACHE)

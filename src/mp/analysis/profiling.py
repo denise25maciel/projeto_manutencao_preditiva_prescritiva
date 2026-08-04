@@ -167,6 +167,123 @@ def ordenar_por_tempo(df: pd.DataFrame, rotulo: str | None = None) -> pd.DataFra
     return sub
 
 
+def analise_intervalos(df: pd.DataFrame, cortes=None) -> dict:
+    """Justifica numericamente onde cortar um episodio.
+
+    Um episodio termina quando a coleta para. Mas "parar" precisa de um numero:
+    quantos segundos sem leitura contam como parada? Escolher esse numero no
+    chute e frageil — a defesa esta em mostrar que os dados o entregam.
+
+    Olhamos so os intervalos **dentro do mesmo rotulo**, que sao os unicos que a
+    regra decide: quando o rotulo muda, o episodio quebra de qualquer jeito.
+
+    O retorno traz:
+
+    - `estatisticas` — minimo, mediana, media e maximo desses intervalos
+    - `faixas` — quantos intervalos caem em cada faixa de duracao
+    - `vazio` — a faixa SEM nenhuma observacao entre a cadencia normal e as
+      paradas reais. E o argumento central: qualquer corte dentro dela produz
+      exatamente o mesmo resultado, entao a escolha deixa de ser arbitraria
+    - `paradas` — estatisticas so das interrupcoes de verdade
+    - `sensibilidade` — quantos episodios cada corte produziria
+    """
+    tempo, rot = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+
+    ordenado = df.sort_values(tempo, kind="stable")
+    gap = ordenado[tempo].diff().dt.total_seconds()
+    mesmo_rotulo = (ordenado[rot] == ordenado[rot].shift()).fillna(False).to_numpy(bool)
+
+    dentro = gap.to_numpy()[mesmo_rotulo]
+    dentro = dentro[~pd.isna(dentro)]
+
+    if dentro.size == 0:
+        return {"estatisticas": {}, "faixas": pd.DataFrame(), "vazio": {},
+                "paradas": {}, "sensibilidade": pd.DataFrame(), "intervalos": dentro}
+
+    estatisticas = {
+        "n": int(dentro.size),
+        "minimo_s": float(dentro.min()),
+        "mediana_s": float(pd.Series(dentro).median()),
+        "media_s": float(dentro.mean()),
+        "maximo_s": float(dentro.max()),
+    }
+
+    limites = [0, 1, 2.5, 4, 6, 10, 15, 20, 30, 60, 300, 3600, float("inf")]
+    faixas = pd.DataFrame(
+        {
+            "de_s": limites[:-1],
+            "ate_s": limites[1:],
+            "intervalos": [
+                int(((dentro >= a) & (dentro < b)).sum())
+                for a, b in zip(limites[:-1], limites[1:])
+            ],
+        }
+    )
+    faixas["vazia"] = faixas["intervalos"] == 0
+
+    # A cadencia nominal e ~2 s; toleramos ate 10 s para nao cortar o segundo
+    # modo de 5,3 s observado no dataset. Acima disso e parada.
+    LIMITE_CADENCIA = 10.0
+    cadencia = dentro[dentro <= LIMITE_CADENCIA]
+    paradas = dentro[dentro > LIMITE_CADENCIA]
+
+    vazio = {
+        "maior_cadencia_s": float(cadencia.max()) if cadencia.size else None,
+        "menor_parada_s": float(paradas.min()) if paradas.size else None,
+    }
+    if vazio["maior_cadencia_s"] is not None and vazio["menor_parada_s"] is not None:
+        vazio["largura_s"] = vazio["menor_parada_s"] - vazio["maior_cadencia_s"]
+        vazio["centro_s"] = (vazio["menor_parada_s"] + vazio["maior_cadencia_s"]) / 2
+
+    resumo_paradas = (
+        {
+            "n": int(paradas.size),
+            "minima_s": float(paradas.min()),
+            "mediana_s": float(pd.Series(paradas).median()),
+            "media_s": float(paradas.mean()),
+            "maxima_s": float(paradas.max()),
+        }
+        if paradas.size
+        else {}
+    )
+
+    # --- sensibilidade -----------------------------------------------------
+    # Conta episodios para varios cortes. Nao e a implementacao da Parte 1 —
+    # aqui so precisamos do NUMERO, para mostrar onde ele fica estavel.
+    cortes = list(cortes) if cortes else [2.5, 5, 8, 10, 12, 15, 20, 30, 45, 60, 120, 300]
+    muda_rotulo = (ordenado[rot] != ordenado[rot].shift()).fillna(True).to_numpy(bool)
+    g = gap.fillna(0).to_numpy()
+
+    sensibilidade = pd.DataFrame(
+        {
+            "corte_s": cortes,
+            "episodios": [
+                int(pd.unique(_acumula(muda_rotulo | (g > c))).size) for c in cortes
+            ],
+        }
+    )
+
+    return {
+        "estatisticas": estatisticas,
+        "faixas": faixas,
+        "vazio": vazio,
+        "paradas": resumo_paradas,
+        "sensibilidade": sensibilidade,
+        "intervalos": dentro,
+    }
+
+
+def _acumula(mascara):
+    """Soma cumulativa de uma mascara booleana, virando id de grupo.
+
+    Existe porque no pandas 3 os booleanos vem do Arrow e nao aceitam `cumsum`;
+    a conta e feita em numpy.
+    """
+    import numpy as np
+
+    return np.cumsum(np.asarray(mascara, dtype=bool))
+
+
 def serie_temporal(
     df: pd.DataFrame,
     rotulo: str,

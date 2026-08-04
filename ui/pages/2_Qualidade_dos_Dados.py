@@ -180,7 +180,181 @@ st.caption(
 )
 
 # --------------------------------------------------------------------------
-# 2.1 Leituras com a mesma data e hora
+# 2.1 Onde termina um ensaio e comeca o proximo
+# --------------------------------------------------------------------------
+st.subheader("Quanto tempo parado significa que a coleta acabou")
+
+iv = D.r_intervalos()
+est = iv["estatisticas"]
+vazio = iv["vazio"]
+paradas = iv["paradas"]
+
+st.markdown(
+    """
+Precisamos agrupar as leituras em **eventos** — cada vez que a maquina foi medida
+com o mesmo defeito. Para isso e preciso saber **quando uma medicao terminou**.
+
+A pergunta e: quantos segundos sem leitura significam "pararam de gravar"?
+
+Se o numero for baixo demais, uma medicao normal se parte em varias. Se for alto
+demais, duas medicoes diferentes viram uma so. A escolha nao pode ser chute.
+
+Abaixo, os intervalos entre leituras **do mesmo tipo de falha** — que sao os unicos
+em que essa duvida existe. Quando o nome da falha muda, o evento acaba de qualquer jeito.
+"""
+)
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Menor intervalo", f"{est['minimo_s']:.1f} s")
+c2.metric("Intervalo tipico", f"{est['mediana_s']:.1f} s")
+c3.metric("Intervalo medio", f"{est['media_s']:.1f} s",
+          help="Bem acima do tipico porque algumas pausas duram dias.")
+c4.metric("Maior intervalo", f"{est['maximo_s'] / 3600:.0f} h")
+
+st.caption(
+    f"Calculado sobre {est['n']:,} intervalos.".replace(",", ".")
+    + " A media ser 8 vezes maior que o valor tipico ja indica que ha dois grupos "
+    "misturados: as leituras normais e as pausas longas."
+)
+
+st.markdown("#### Os dois grupos, separados")
+
+faixas = iv["faixas"].copy()
+faixas["faixa"] = [
+    f"{a:.0f} a {b:.0f} s" if b != float("inf") else f"acima de {a:.0f} s"
+    for a, b in zip(faixas["de_s"], faixas["ate_s"])
+]
+
+st.altair_chart(
+    alt.Chart(faixas)
+    .mark_bar()
+    .encode(
+        x=alt.X("faixa:N", sort=list(faixas["faixa"]), title="intervalo entre leituras",
+                axis=alt.Axis(labelAngle=-40)),
+        y=alt.Y("intervalos:Q", title="quantas vezes",
+                scale=alt.Scale(type="symlog")),
+        color=alt.Color(
+            "vazia:N",
+            title=None,
+            scale=alt.Scale(domain=[False, True], range=["#4c78a8", "#d1495b"]),
+            legend=alt.Legend(labelExpr="datum.label == 'true' ? 'faixa vazia' : 'com dados'"),
+        ),
+        tooltip=["faixa", "intervalos"],
+    )
+    .properties(height=300),
+    width="stretch",
+)
+
+st.dataframe(
+    faixas[["faixa", "intervalos", "vazia"]],
+    hide_index=True,
+    column_config={
+        "faixa": "intervalo",
+        "intervalos": st.column_config.NumberColumn("quantas vezes", format="%d"),
+        "vazia": st.column_config.CheckboxColumn("faixa vazia?"),
+    },
+)
+
+if vazio.get("largura_s"):
+    st.success(
+        f"""
+### O dado responde a pergunta sozinho
+
+Existe uma faixa **completamente vazia** entre os dois grupos:
+
+- O maior intervalo de coleta normal e **{vazio['maior_cadencia_s']:.1f} segundos**
+- A menor pausa de verdade e **{vazio['menor_parada_s']:.1f} segundos**
+- Entre os dois: **nenhuma ocorrencia em {est['n']:,} intervalos**
+
+Ou seja, nao existe meio-termo. Ou a maquina esta gravando normalmente (ate 6 s),
+ou alguem parou (16 s ou mais). Nada cai no meio.
+
+**Qualquer corte entre {vazio['maior_cadencia_s']:.0f} e {vazio['menor_parada_s']:.0f}
+segundos produz exatamente o mesmo resultado.** A escolha deixa de ser opiniao.
+""".replace(",", ".")
+    )
+
+if paradas:
+    st.markdown("#### As pausas de verdade")
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Quantas", f"{paradas['n']:,}".replace(",", "."))
+    p2.metric("Mais curta", f"{paradas['minima_s']:.0f} s")
+    p3.metric("Tipica", f"{paradas['mediana_s']:.0f} s")
+    p4.metric("Mais longa", f"{paradas['maxima_s'] / 3600:.0f} h")
+    st.caption(
+        f"A pausa tipica e de {paradas['mediana_s']:.0f} segundos — o tempo do "
+        "operador mexer na bancada entre um ensaio e o proximo. As mais longas sao "
+        "intervalos de dias entre campanhas de coleta."
+    )
+
+st.markdown("#### Testando cada corte possivel")
+
+sens = iv["sensibilidade"]
+st.markdown(
+    """
+Aqui esta a prova pratica: quantos eventos cada corte produziria. Repare no
+**patamar** — a regiao onde mudar o numero nao muda o resultado.
+"""
+)
+
+st.altair_chart(
+    alt.Chart(sens)
+    .mark_line(point=True, strokeWidth=2, color="#4c78a8")
+    .encode(
+        x=alt.X("corte_s:Q", title="corte usado (segundos)",
+                scale=alt.Scale(type="log")),
+        y=alt.Y("episodios:Q", title="eventos resultantes",
+                scale=alt.Scale(type="log")),
+        tooltip=[alt.Tooltip("corte_s:Q", title="corte (s)"), "episodios"],
+    )
+    .properties(height=300),
+    width="stretch",
+)
+
+st.dataframe(
+    sens,
+    hide_index=True,
+    column_config={
+        "corte_s": st.column_config.NumberColumn("corte (s)", format="%.1f"),
+        "episodios": st.column_config.NumberColumn("eventos", format="%d"),
+    },
+)
+
+st.info(
+    """
+### Lendo a tabela
+
+**Corte de 2,5 ou 5 segundos → 11 mil eventos.** Errado. Parte das leituras vem a
+cada 5,3 segundos, e um corte abaixo disso parte cada medicao em centenas de pedacos.
+
+**Corte de 8 a 15 segundos → 570 eventos, sempre.** Quatro valores diferentes, o
+mesmo resultado. E o patamar: qualquer numero aqui dentro cai na faixa vazia.
+
+**Corte de 20 segundos ou mais → o numero cai.** Comeca a juntar ensaios que foram
+separados de verdade. Com 60 s sobram 366 eventos: ensaios consecutivos do mesmo
+defeito ficam grudados.
+
+### A decisao
+
+**Corte de 10 segundos.** Nao por ser o melhor — dentro do patamar todos empatam —
+mas por ser o **centro da faixa vazia** (que vai de 6 a 16 s). Ficar no meio deixa a
+maior margem dos dois lados, caso uma coleta futura tenha ritmo um pouco diferente.
+
+Registrado em `config.GAP_NOVO_EPISODIO_S`.
+"""
+)
+
+st.caption(
+    "Uma observacao: este corte de 10 s separa **ensaios**. Ele e diferente do corte "
+    f"de {int(D.config.GAP_NOVA_SESSAO_S)} s usado mais acima, que separa **campanhas "
+    "de coleta** — dias distintos em que a bancada foi usada. Sao duas perguntas "
+    "diferentes, por isso dois numeros."
+)
+
+st.divider()
+
+# --------------------------------------------------------------------------
+# 2.2 Leituras com a mesma data e hora
 # --------------------------------------------------------------------------
 st.subheader("Leituras gravadas com a mesma data e hora")
 
