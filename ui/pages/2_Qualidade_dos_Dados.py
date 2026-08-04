@@ -259,21 +259,24 @@ marcadas na proxima etapa.
 """.replace(",", ".")
     )
 
-    st.caption(
-        "As leituras do bloco, em ordem de id. Repare que as medidas mudam de linha "
-        "para linha, mas a data e hora nao."
+    linhas_dup = tempos_dup["linhas"]
+
+    st.markdown(
+        f"""
+**As {len(linhas_dup):,} leituras do bloco, com todas as {linhas_dup.shape[1]} colunas.**
+
+Estao em ordem de `id`. Role a tabela para o lado para ver todas as medidas.
+
+Repare no essencial: a coluna **data e hora e sempre a mesma**, enquanto todas as
+medidas de vibracao **mudam de linha para linha**. E isso que prova que sao leituras
+diferentes com o horario errado, e nao o mesmo registro copiado.
+""".replace(",", ".")
     )
 
-    colunas_ver = [
-        "id", "created_at", "fault", "rpm", "z_rms_velocity_mm_s",
-        "x_rms_velocity_mm_s", "z_kurtosis", "z_crest_factor", "temperature_c",
-    ]
-    colunas_ver = [c for c in colunas_ver if c in tempos_dup["linhas"].columns]
-
     st.dataframe(
-        tempos_dup["linhas"][colunas_ver],
+        linhas_dup,
         hide_index=True,
-        height=400,
+        height=460,
         column_config={
             "created_at": st.column_config.DatetimeColumn(
                 "data e hora", format="DD/MM/YYYY HH:mm:ss.SSSSSS"
@@ -281,6 +284,29 @@ marcadas na proxima etapa.
             "fault": "tipo de falha",
         },
     )
+
+    with st.expander("Quanto cada medida variou dentro do bloco"):
+        st.caption(
+            "Se fossem copias do mesmo registro, minimo e maximo seriam iguais em "
+            "todas as linhas."
+        )
+        medidas_bloco = linhas_dup.select_dtypes(include="number").drop(
+            columns=["id"], errors="ignore"
+        )
+        variacao = medidas_bloco.describe().T[["min", "50%", "max", "std"]].reset_index()
+        variacao.columns = ["medida", "minimo", "valor do meio", "maximo", "desvio"]
+        variacao["valores diferentes"] = [
+            int(medidas_bloco[c].nunique()) for c in medidas_bloco.columns
+        ]
+        st.dataframe(
+            variacao.round(4), hide_index=True, height=400,
+            column_config={
+                "valores diferentes": st.column_config.NumberColumn(
+                    "valores diferentes", format="%d",
+                    help="Quantos valores distintos essa medida assume nas 1000 linhas.",
+                ),
+            },
+        )
 
     st.download_button(
         "Baixar as leituras afetadas (CSV)",
