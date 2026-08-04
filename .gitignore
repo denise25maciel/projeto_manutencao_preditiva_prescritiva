@@ -1,9 +1,12 @@
 # ---------------------------------------------------------------------------
 # Dados da empresa — NUNCA versionar
 # ---------------------------------------------------------------------------
-# Insumos brutos (CSV de sensores, PDFs de procedimentos)
+# Insumos brutos (CSV de sensores, PDFs de procedimentos).
+# A pasta do enunciado ja mudou de nome duas vezes; todas ficam bloqueadas.
 data/raw/
+descricao_desafio/
 teste_industria/
+docs/
 
 # Banco SQLite e derivados
 data/*.db
