@@ -31,6 +31,8 @@ from mp.ingestion import (  # noqa: E402
     construir_eventos,
     converter_todos,
     diagnostico_eventos,
+    diagnostico_ordenacao,
+    exemplo_desordem,
     matriz_campos,
     resumo_por_rotulo,
     validar_eventos,
@@ -211,6 +213,16 @@ def r_ordenado(rotulo: str):
 def r_eventos(limite_intervalo_s: float | None = None):
     """`(leituras com a coluna evento, tabela de eventos)`."""
     return construir_eventos(dados(), limite_intervalo_s=limite_intervalo_s)
+
+
+@st.cache_data(**CACHE)
+def r_ordenacao():
+    return diagnostico_ordenacao(dados())
+
+
+@st.cache_data(**CACHE)
+def r_exemplo_desordem():
+    return exemplo_desordem(dados())
 
 
 @st.cache_data(**CACHE)

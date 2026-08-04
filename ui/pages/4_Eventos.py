@@ -46,11 +46,81 @@ validacao = D.r_validacao_eventos()
 resumo = D.r_resumo_eventos()
 diagnostico = D.r_diagnostico_eventos()
 bruto = D.dados()
+ordenacao = D.r_ordenacao()
+
+# ==========================================================================
+# 0. Ordenacao — pre-requisito de tudo
+# ==========================================================================
+st.header("1. Antes de agrupar: ordenar por data")
+
+if ordenacao["ja_ordenado"]:
+    st.info("O arquivo ja vem em ordem de data. A ordenacao nao muda nada.")
+else:
+    st.error(
+        f"""
+### O arquivo NAO vem ordenado por data
+
+Esta e a informacao mais importante desta tela.
+
+O `banner.csv` chega com as linhas fora de ordem cronologica. Nao e uma pequena
+bagunca: **{ordenacao['pct_fora_do_lugar']:.0f}% das linhas
+({ordenacao['linhas_fora_do_lugar']:,}) mudam de lugar** quando ordenamos.
+
+A coluna `id` tambem nao esta em ordem.
+
+**Por isso ordenamos por `created_at` antes de qualquer agrupamento.**
+""".replace(",", ".")
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Linhas fora do lugar", f"{ordenacao['linhas_fora_do_lugar']:,}".replace(",", "."),
+              f"{ordenacao['pct_fora_do_lugar']:.0f}% do arquivo", delta_color="inverse")
+    c2.metric("Linhas que voltam no tempo", ordenacao["linhas_que_voltam_no_tempo"],
+              help="Linhas cuja data e ANTERIOR a da linha de cima.")
+    c3.metric("Maior salto para tras",
+              f"{abs(ordenacao['maior_salto_para_tras_dias']):.0f} dias")
+
+    exemplo = D.r_exemplo_desordem()
+    if not exemplo.empty:
+        st.caption(
+            "Duas linhas vizinhas no arquivo, como ele veio. A de baixo e de "
+            "**um mes antes** da de cima:"
+        )
+        st.dataframe(
+            exemplo,
+            hide_index=True,
+            column_config={
+                "posicao_no_arquivo": st.column_config.NumberColumn("linha n", format="%d"),
+                "created_at": st.column_config.DatetimeColumn(
+                    "data e hora", format="DD/MM/YYYY HH:mm:ss"
+                ),
+                "fault": "tipo de falha",
+            },
+        )
+
+    st.warning(
+        f"""
+**O que aconteceria sem ordenar**
+
+Agrupar linhas vizinhas de um arquivo desordenado junta leituras que nao tem
+relacao entre si. Duas linhas coladas no arquivo podem estar a um mes de
+distancia na realidade.
+
+O resultado seriam **{ordenacao['eventos_sem_ordenar']} eventos** em vez de
+{len(eventos)} — e cada um deles misturaria momentos diferentes, com inicio e fim
+sem sentido.
+
+A ordenacao acontece dentro de `construir_eventos`, sempre. Nao depende de o
+arquivo chegar arrumado.
+"""
+    )
+
+st.divider()
 
 # ==========================================================================
 # 1. Antes e depois
 # ==========================================================================
-st.header("1. O que mudou")
+st.header("2. O que mudou")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Linhas no arquivo", f"{len(bruto):,}".replace(",", "."))
@@ -67,7 +137,7 @@ st.caption(
 # ==========================================================================
 # 2. Validacao
 # ==========================================================================
-st.header("2. O agrupamento esta correto?")
+st.header("3. O agrupamento esta correto?")
 
 st.markdown(
     "Cinco checagens que ou passam ou falham. Se alguma falhar, o resultado "
@@ -93,7 +163,7 @@ st.dataframe(
 # ==========================================================================
 # 3. Quantas vezes cada falha aconteceu
 # ==========================================================================
-st.header("3. Quantas vezes cada falha aconteceu")
+st.header("4. Quantas vezes cada falha aconteceu")
 
 st.markdown("Esta e a tabela que responde a pergunta do operador.")
 
@@ -156,7 +226,7 @@ st.altair_chart(
 # ==========================================================================
 # 4. A lista de eventos
 # ==========================================================================
-st.header("4. Todos os eventos")
+st.header("5. Todos os eventos")
 
 filtro = st.multiselect(
     "Filtrar por tipo de falha",
@@ -191,7 +261,7 @@ st.download_button(
 # ==========================================================================
 # 5. O custo de usar so o rotulo
 # ==========================================================================
-st.header("5. O que esta regra deixa passar")
+st.header("6. O que esta regra deixa passar")
 
 _, eventos_10s = D.r_eventos(10.0)
 
@@ -265,7 +335,7 @@ A tela mostra o custo para a escolha continuar sendo informada.
 # ==========================================================================
 zero = eventos[eventos["duracao_s"] == 0]
 if len(zero):
-    st.header("6. Um evento impossivel")
+    st.header("7. Um evento impossivel")
     st.error(
         f"""
 Existe **{len(zero)} evento com duracao zero** e

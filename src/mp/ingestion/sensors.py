@@ -74,6 +74,64 @@ def construir_eventos(
     return leituras, eventos
 
 
+def diagnostico_ordenacao(df: pd.DataFrame) -> dict:
+    """Mede o quanto o arquivo bruto esta fora de ordem.
+
+    `construir_eventos` ordena por data antes de agrupar, e essa etapa nao e
+    detalhe: agrupar linhas vizinhas num arquivo desordenado junta leituras que
+    nao tem relacao nenhuma entre si.
+
+    Devolve os numeros que justificam a ordenacao, incluindo quantos eventos
+    sairiam se ela fosse pulada.
+    """
+    tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+
+    delta = df[tempo].diff().dt.total_seconds()
+
+    # Posicao de cada linha hoje x posicao depois de ordenar.
+    posicao_atual = np.arange(len(df))
+    posicao_ordenada = df[tempo].rank(method="first").astype("int64").to_numpy() - 1
+
+    eventos_sem_ordenar = (
+        int(segmentos.numerar_grupos(segmentos.mudou_valor(df[rotulo]))[-1])
+        if len(df)
+        else 0
+    )
+
+    return {
+        "ja_ordenado": bool(df[tempo].is_monotonic_increasing),
+        "id_ordenado": bool(df[config.COLUNA_ID].is_monotonic_increasing)
+        if config.COLUNA_ID in df.columns
+        else None,
+        "linhas_que_voltam_no_tempo": int((delta < 0).sum()),
+        "maior_salto_para_tras_dias": float(delta.min() / 86400) if len(delta) else 0.0,
+        "linhas_fora_do_lugar": int((posicao_atual != posicao_ordenada).sum()),
+        "pct_fora_do_lugar": round(
+            float((posicao_atual != posicao_ordenada).mean() * 100), 1
+        ),
+        "eventos_sem_ordenar": eventos_sem_ordenar,
+    }
+
+
+def exemplo_desordem(df: pd.DataFrame, n: int = 2) -> pd.DataFrame:
+    """As duas linhas vizinhas com o maior salto para tras no arquivo bruto.
+
+    Serve de prova concreta: no arquivo como veio, a linha seguinte pode ser de
+    um mes antes.
+    """
+    tempo = config.COLUNA_TEMPO
+    delta = df[tempo].diff().dt.total_seconds()
+    if delta.isna().all() or delta.min() >= 0:
+        return pd.DataFrame()
+
+    i = int(delta.idxmin())
+    colunas = [c for c in (config.COLUNA_ID, tempo, config.COLUNA_ROTULO)
+               if c in df.columns]
+    recorte = df.loc[[i - 1, i], colunas].copy()
+    recorte.insert(0, "posicao_no_arquivo", [i - 1, i])
+    return recorte
+
+
 def diagnostico_eventos(
     leituras: pd.DataFrame, eventos: pd.DataFrame, limite_alerta_s: float = 60.0
 ) -> pd.DataFrame:
