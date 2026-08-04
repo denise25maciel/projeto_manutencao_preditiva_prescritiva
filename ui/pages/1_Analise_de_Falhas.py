@@ -244,7 +244,7 @@ if n_sel > 1:
             "sobrepostas nos trechos em comum."
         )
 
-col_todas, col_faixa = st.columns([1, 1])
+col_todas, col_faixa, col_altura = st.columns([1, 1, 2])
 with col_todas:
     todas_colunas = st.checkbox(
         "Todas as colunas numericas",
@@ -258,6 +258,14 @@ with col_faixa:
         value=False,
         help="A faixa preserva os picos que a reamostragem esconderia. Com muitas "
              "series ela polui a leitura, por isso vem desligada.",
+    )
+with col_altura:
+    # Altura no controle do usuario em vez de fixa: a leitura util depende de
+    # quantas colunas estao na tela e do tamanho do monitor.
+    altura = st.slider(
+        "Altura de cada grafico (px)", 200, 700, 360, step=20,
+        help="Graficos mais altos separam melhor as variacoes pequenas; com muitas "
+             "colunas a pagina fica longa.",
     )
 
 if todas_colunas:
@@ -299,8 +307,6 @@ else:
         )
 
     escala_cor = alt.Scale(domain=selecionados, range=[cor_de[r] for r in selecionados])
-    # Com 23 graficos empilhados, 260px cada dariam 6 mil pixels de rolagem.
-    altura = 260 if n_col <= 4 else 170
 
     for coluna_dado in colunas_serie:
         # Um DataFrame com todos os rotulos: e o que permite sobrepor as series
