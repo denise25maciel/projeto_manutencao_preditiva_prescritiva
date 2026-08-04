@@ -171,8 +171,14 @@ def r_numericas():
 
 
 @st.cache_data(**CACHE)
-def r_serie_temporal(rotulo: str, colunas: tuple[str, ...]):
-    return serie_temporal(dados(), rotulo, list(colunas))
+def r_serie_temporal(rotulo: str, colunas: tuple[str, ...], max_pontos: int | None = None):
+    """`max_pontos` e o orcamento POR ROTULO.
+
+    Quando varios rotulos vao para o mesmo grafico, a pagina divide o teto
+    global entre eles — senao o payload enviado ao navegador cresce com o
+    numero de series e o Vega estoura o limite de linhas.
+    """
+    return serie_temporal(dados(), rotulo, list(colunas), max_pontos=max_pontos)
 
 
 @st.cache_data(**CACHE)
