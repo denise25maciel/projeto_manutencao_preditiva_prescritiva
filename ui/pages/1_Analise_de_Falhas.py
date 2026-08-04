@@ -1,4 +1,9 @@
-"""Valores unicos de `fault` e a assinatura de vibracao de cada um."""
+"""Valores unicos de `fault` e a assinatura de vibracao de cada um.
+
+A secao 2 compara ate 4 rotulos lado a lado: uma coluna por rotulo, mesma
+analise em cada uma. Comparar e o ponto — a Parte 3 vai precisar saber quais
+classes o kNN tende a confundir, e isso so aparece olhando duas juntas.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,9 @@ import streamlit as st
 import _dados as D
 
 D.configurar_pagina("Analise de Falhas", "📊")
+
+# Acima disso as colunas ficam estreitas demais para os graficos serem lidos.
+MAX_ROTULOS = 4
 
 st.title("📊 Analise de Falhas")
 st.caption("Valores unicos da coluna `fault` e o comportamento medido de cada um.")
@@ -112,280 +120,342 @@ with st.expander("Leituras por familia sugerida"):
 st.divider()
 
 # ==========================================================================
-# 2. Caracteristicas do rotulo selecionado
+# 2. Caracteristicas dos rotulos selecionados
 # ==========================================================================
-st.header("2. Caracteristicas de um rotulo")
+st.header("2. Caracteristicas de um ou mais rotulos")
 
 opcoes = tabela.sort_values("n_leituras", ascending=False)["fault"].tolist()
 _leituras = dict(zip(tabela["fault"], tabela["n_leituras"]))
-escolhido = st.selectbox("Rotulo", opcoes, format_func=lambda r: f"{r}  ({_leituras[r]} leituras)")
 
-info = tabela[tabela["fault"] == escolhido].iloc[0]
+selecionados = st.multiselect(
+    "Rotulos",
+    opcoes,
+    default=opcoes[:1],
+    max_selections=MAX_ROTULOS,
+    format_func=lambda r: f"{r}  ({_leituras[r]} leituras)",
+    help=f"Ate {MAX_ROTULOS} rotulos. Cada um vira uma coluna, com a mesma analise "
+         "repetida lado a lado.",
+)
 
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Leituras", f"{int(info['n_leituras']):,}".replace(",", "."))
-m2.metric("% do dataset", f"{info['pct']:.2f}%")
-m3.metric("Familia sugerida", info["familia_sugerida"])
-m4.metric("Classificacao", "Defeito" if info["e_problema"] else "Estado")
-m5.metric("Span coberto", f"{info['span_horas']:.1f} h")
+if not selecionados:
+    st.info("Selecione ao menos um rotulo para ver a analise.")
+    st.stop()
 
-if not info["e_problema"]:
+n_sel = len(selecionados)
+# Cores fixas por posicao: a mesma cor identifica o rotulo em todos os blocos.
+PALETA = ["#d1495b", "#4c78a8", "#2d6a4f", "#e2a03f"]
+cor_de = {r: PALETA[i % len(PALETA)] for i, r in enumerate(selecionados)}
+
+info_de = {r: tabela[tabela["fault"] == r].iloc[0] for r in selecionados}
+ordenado_de = {r: D.r_ordenado(r) for r in selecionados}
+
+# --- 2a. Cabecalho comparativo ---------------------------------------------
+st.subheader("Panorama")
+
+for coluna, rotulo in zip(st.columns(n_sel), selecionados):
+    info = info_de[rotulo]
+    ordenado = ordenado_de[rotulo]
+    with coluna:
+        st.markdown(
+            f"<div style='border-left:5px solid {cor_de[rotulo]};padding-left:10px'>"
+            f"<b>{rotulo}</b></div>",
+            unsafe_allow_html=True,
+        )
+        st.metric("Leituras", f"{int(info['n_leituras']):,}".replace(",", "."))
+        st.metric("% do dataset", f"{info['pct']:.2f}%")
+        st.metric("Familia sugerida", info["familia_sugerida"])
+        st.metric("Classificacao", "Defeito" if info["e_problema"] else "Estado")
+        st.metric("Sessoes de coleta", int(ordenado["sessao"].nunique()))
+        st.metric("Span coberto", f"{info['span_horas']:.1f} h")
+
+estados = [r for r in selecionados if not info_de[r]["e_problema"]]
+if estados:
     st.info(
-        "Rotulo classificado como **estado**, nao defeito. No pipeline final o "
-        "guardrail G2 encerra o fluxo prescritivo aqui: nao ha acao corretiva a "
-        "sugerir para uma maquina normal, em teste ou desligada."
+        f"**{', '.join(estados)}** — classificado(s) como **estado**, nao defeito. "
+        "No pipeline final o guardrail G2 encerra o fluxo prescritivo aqui: nao ha "
+        "acao corretiva a sugerir para uma maquina normal, em teste ou desligada."
     )
 
-# --- 2a. Assinatura vs. resto do dataset ----------------------------------
-st.subheader("O que distingue este rotulo")
+st.divider()
 
-comp = D.r_comparacao(escolhido)
+# --- 2b. Assinatura comparada ----------------------------------------------
+st.subheader("Assinatura: o que distingue cada rotulo")
+
+comparacoes = {r: D.r_comparacao(r) for r in selecionados}
+
+# Tabela unica: uma linha por feature, uma coluna por rotulo. Comparar valores
+# na horizontal e mais direto que alternar entre tabelas separadas.
+primeiro = comparacoes[selecionados[0]]
+comparada = primeiro[["feature", "mediana_global"]].copy()
+for r in selecionados:
+    c = comparacoes[r].set_index("feature")
+    comparada[f"{r}"] = comparada["feature"].map(c["mediana_rotulo"])
+    comparada[f"Δ% {r}"] = comparada["feature"].map(c["desvio_pct"])
+
+# Ordem compartilhada por todos os blocos: features que mais separam ALGUM dos
+# rotulos seleccionados vem primeiro. Sem ordem comum, os graficos lado a lado
+# ficariam com linhas trocadas e a comparacao visual nao funcionaria.
+colunas_desvio = [f"Δ% {r}" for r in selecionados]
+comparada["_max_abs"] = comparada[colunas_desvio].abs().max(axis=1)
+comparada = comparada.sort_values("_max_abs", ascending=False).drop(columns="_max_abs")
+ordem_features = comparada["feature"].tolist()
+
 st.caption(
-    "Mediana do rotulo contra a mediana do dataset inteiro. Ordenado pelo desvio "
-    "absoluto — as primeiras linhas sao as features que mais caracterizam o rotulo."
-)
-
-st.altair_chart(
-    alt.Chart(comp.head(12))
-    .mark_bar()
-    .encode(
-        x=alt.X("desvio_pct:Q", title="desvio da mediana global (%)"),
-        y=alt.Y("feature:N", sort=alt.EncodingSortField("desvio_pct", op="min"), title=None),
-        color=alt.condition(alt.datum.desvio_pct > 0, alt.value("#d1495b"), alt.value("#4c78a8")),
-        tooltip=["feature", "mediana_rotulo", "mediana_global", "desvio_pct"],
-    )
-    .properties(height=330),
-    width="stretch",
-)
-
-# --- 2b. Tabela de assinatura ---------------------------------------------
-st.subheader("Assinatura detalhada")
-st.caption(
-    "Mediana como valor central (kurtosis e crest factor sao definidos sobre picos — "
-    "um impacto isolado desloca a media, nao a mediana). `cv` e o coeficiente de "
-    "variacao: quanto maior, mais dispersa a classe e mais o kNN vai confundi-la."
+    "Mediana de cada rotulo contra a mediana do dataset inteiro. `Δ%` e o quanto a "
+    "feature se afasta do comportamento geral. Ordenado pelo maior desvio entre os "
+    "rotulos escolhidos — a mesma ordem vale para os graficos abaixo, para que as "
+    "linhas correspondam entre as colunas."
 )
 
 st.dataframe(
-    D.r_assinatura(escolhido),
+    comparada,
     hide_index=True,
-    height=420,
+    height=min(560, 40 + 35 * len(comparada)),
     column_config={
-        "cv": st.column_config.NumberColumn(
-            "cv", format="%.3f", help="desvio / |media| — dispersao relativa"
-        ),
+        "feature": st.column_config.TextColumn("feature", width="medium"),
+        "mediana_global": st.column_config.NumberColumn("mediana global", format="%.4f"),
+        **{r: st.column_config.NumberColumn(r, format="%.4f") for r in selecionados},
+        **{
+            f"Δ% {r}": st.column_config.NumberColumn(f"Δ% {r}", format="%.1f%%")
+            for r in selecionados
+        },
     },
 )
 
-# --- 2c. Distribuicao de uma feature --------------------------------------
+for coluna, rotulo in zip(st.columns(n_sel), selecionados):
+    with coluna:
+        st.caption(f"**{rotulo}** — desvio da mediana global")
+        st.altair_chart(
+            alt.Chart(comparacoes[rotulo])
+            .mark_bar(color=cor_de[rotulo])
+            .encode(
+                x=alt.X("desvio_pct:Q", title="Δ% vs global"),
+                y=alt.Y("feature:N", sort=ordem_features, title=None),
+                tooltip=["feature", "mediana_rotulo", "mediana_global", "desvio_pct"],
+            )
+            .properties(height=26 * len(ordem_features)),
+            width="stretch",
+        )
+
+with st.expander("Estatistica detalhada por rotulo (quartis, desvio, CV)"):
+    st.caption(
+        "`cv` e o coeficiente de variacao: quanto maior, mais dispersa a classe e "
+        "mais o kNN vai confundi-la na Parte 3."
+    )
+    for coluna, rotulo in zip(st.columns(n_sel), selecionados):
+        with coluna:
+            st.caption(f"**{rotulo}**")
+            st.dataframe(
+                D.r_assinatura(rotulo),
+                hide_index=True,
+                height=400,
+                column_config={
+                    "cv": st.column_config.NumberColumn("cv", format="%.3f"),
+                },
+            )
+
+st.divider()
+
+# --- 2c. Distribuicao de uma feature ---------------------------------------
 st.subheader("Distribuicao de uma feature")
 
 numericas = D.r_numericas()
 padrao = "z_rms_velocity_mm_s" if "z_rms_velocity_mm_s" in numericas else numericas[0]
 feature = st.selectbox("Feature", numericas, index=numericas.index(padrao))
 
-serie_rotulo = D.r_serie(escolhido, feature)
 serie_global = D.dados()[feature].to_numpy()
+series_rotulo = {r: D.r_serie(r, feature) for r in selecionados}
 
-# Histograma calculado no numpy e desenhado no Altair. Passar 166 mil pontos
-# crus para o navegador travaria a pagina.
-# O limite superior usa o percentil 99,9 do global para a cauda longa nao
-# achatar todo o grafico num unico bin.
-lo = float(min(serie_rotulo.min(), np.quantile(serie_global, 0.001)))
-hi = float(max(serie_rotulo.max(), np.quantile(serie_global, 0.999)))
+# Bordas COMPARTILHADAS entre todos os rotulos. Com bins proprios por rotulo os
+# histogramas ficariam com larguras diferentes e a comparacao visual seria falsa.
+lo = float(min(min(s.min() for s in series_rotulo.values()),
+               np.quantile(serie_global, 0.001)))
+hi = float(max(max(s.max() for s in series_rotulo.values()),
+               np.quantile(serie_global, 0.999)))
 if hi <= lo:
     hi = lo + 1e-6
 bordas = np.linspace(lo, hi, 61)
 centros = (bordas[:-1] + bordas[1:]) / 2
-
-h_rot, _ = np.histogram(serie_rotulo, bins=bordas)
 h_glo, _ = np.histogram(serie_global, bins=bordas)
+dens_glo = h_glo / max(h_glo.sum(), 1)
 
-hist = pd.DataFrame(
-    {
-        "valor": np.concatenate([centros, centros]),
-        # Densidade, nao contagem: o rotulo tem milhares de linhas e o dataset
-        # tem 166 mil. Em contagem bruta a barra do rotulo sumiria.
-        "densidade": np.concatenate(
-            [h_rot / max(h_rot.sum(), 1), h_glo / max(h_glo.sum(), 1)]
-        ),
-        "serie": [escolhido] * len(centros) + ["dataset inteiro"] * len(centros),
-    }
+st.caption(
+    "Densidade, nao contagem — cada rotulo tem um numero diferente de leituras e em "
+    "contagem bruta o menor sumiria. Os intervalos do histograma sao os mesmos nos "
+    "graficos, entao as formas sao comparaveis."
 )
 
-st.altair_chart(
-    alt.Chart(hist)
-    .mark_area(opacity=0.55, interpolate="step")
-    .encode(
-        x=alt.X("valor:Q", title=feature),
-        y=alt.Y("densidade:Q", title="densidade", stack=None),
-        color=alt.Color(
-            "serie:N",
-            title=None,
-            scale=alt.Scale(
-                domain=[escolhido, "dataset inteiro"], range=["#d1495b", "#b0b0b0"]
-            ),
-        ),
-        tooltip=[
-            "serie",
-            alt.Tooltip("valor:Q", format=".4f"),
-            alt.Tooltip("densidade:Q", format=".4f"),
-        ],
+for coluna, rotulo in zip(st.columns(n_sel), selecionados):
+    h_rot, _ = np.histogram(series_rotulo[rotulo], bins=bordas)
+    hist = pd.DataFrame(
+        {
+            "valor": np.concatenate([centros, centros]),
+            "densidade": np.concatenate([h_rot / max(h_rot.sum(), 1), dens_glo]),
+            "serie": [rotulo] * len(centros) + ["dataset inteiro"] * len(centros),
+        }
     )
-    .properties(height=300),
-    width="stretch",
-)
+    with coluna:
+        st.caption(f"**{rotulo}**")
+        st.altair_chart(
+            alt.Chart(hist)
+            .mark_area(opacity=0.55, interpolate="step")
+            .encode(
+                x=alt.X("valor:Q", title=feature),
+                y=alt.Y("densidade:Q", title="densidade", stack=None),
+                color=alt.Color(
+                    "serie:N",
+                    title=None,
+                    scale=alt.Scale(
+                        domain=[rotulo, "dataset inteiro"],
+                        range=[cor_de[rotulo], "#b0b0b0"],
+                    ),
+                    legend=alt.Legend(orient="bottom"),
+                ),
+                tooltip=[
+                    "serie",
+                    alt.Tooltip("valor:Q", format=".4f"),
+                    alt.Tooltip("densidade:Q", format=".4f"),
+                ],
+            )
+            .properties(height=260),
+            width="stretch",
+        )
+
+st.divider()
 
 # --- 2d. Serie temporal ----------------------------------------------------
 st.subheader("Serie temporal")
 
-ordenado = D.r_ordenado(escolhido)
-n_sessoes = int(ordenado["sessao"].nunique())
-
-s1, s2, s3, s4 = st.columns(4)
-s1.metric("Leituras", f"{len(ordenado):,}".replace(",", "."))
-s2.metric("Sessoes de coleta", n_sessoes)
-s3.metric("Inicio", f"{ordenado['created_at'].iloc[0]:%d/%m %H:%M}")
-s4.metric("Fim", f"{ordenado['created_at'].iloc[-1]:%d/%m %H:%M}")
-
 st.caption(
-    "As leituras deste rotulo, ordenadas por `created_at`. O arquivo bruto **nao** "
+    "As leituras de cada rotulo, ordenadas por `created_at`. O arquivo bruto **nao** "
     "esta em ordem cronologica — a ordenacao e feita aqui. Intervalos maiores que "
     f"{int(D.config.GAP_NOVA_SESSAO_S)} s marcam fronteira de sessao, e a linha "
     "**quebra** nessas fronteiras: ligar o fim de uma sessao ao inicio da seguinte "
     "inventaria uma transicao que nunca existiu."
 )
 
-if n_sessoes > 1:
-    resumo_sessoes = (
-        ordenado.groupby("sessao")
-        .agg(leituras=("created_at", "size"),
-             inicio=("created_at", "min"),
-             fim=("created_at", "max"))
-        .reset_index()
-    )
-    resumo_sessoes["duracao_min"] = (
-        (resumo_sessoes["fim"] - resumo_sessoes["inicio"]).dt.total_seconds() / 60
-    ).round(1)
+multi_sessao = {r: int(ordenado_de[r]["sessao"].nunique()) for r in selecionados}
+if any(v > 1 for v in multi_sessao.values()):
+    detalhe = ", ".join(f"`{r}` ({v})" for r, v in multi_sessao.items() if v > 1)
     st.info(
-        f"Este rotulo aparece em **{n_sessoes} sessoes** de coleta distintas, "
-        f"cobrindo {info['span_horas']:.1f} h de ponta a ponta. Contar suas linhas "
+        f"Rotulos coletados em mais de uma sessao: {detalhe}. Contar suas linhas "
         "como ocorrencias somaria sessoes independentes."
     )
-    with st.expander("Sessoes de coleta"):
-        st.dataframe(
-            resumo_sessoes, hide_index=True,
-            column_config={
-                "leituras": st.column_config.NumberColumn("leituras", format="%d"),
-                "inicio": st.column_config.DatetimeColumn("inicio", format="DD/MM/YY HH:mm:ss"),
-                "fim": st.column_config.DatetimeColumn("fim", format="DD/MM/YY HH:mm:ss"),
-                "duracao_min": st.column_config.NumberColumn("duracao (min)", format="%.1f"),
-            },
-        )
 
 colunas_serie = st.multiselect(
     "Colunas para plotar",
     numericas,
     default=[padrao],
-    help="Cada coluna vira um grafico proprio — escalas diferentes num eixo so "
+    help="Cada coluna vira uma faixa de graficos — escalas diferentes num eixo so "
          "esconderiam a variacao da menor.",
 )
 
 if not colunas_serie:
     st.caption("Selecione ao menos uma coluna.")
 else:
-    serie = D.r_serie_temporal(escolhido, tuple(colunas_serie))
+    series = {r: D.r_serie_temporal(r, tuple(colunas_serie)) for r in selecionados}
 
-    if serie["reamostrado"]:
+    reamostrados = [r for r in selecionados if series[r]["reamostrado"]]
+    if reamostrados:
+        detalhe = ", ".join(
+            f"`{r}` ({series[r]['n_original']:,} -> {series[r]['n_pontos']:,} pontos, "
+            f"blocos de {series[r]['fator']})".replace(",", ".")
+            for r in reamostrados
+        )
         st.caption(
-            f"**Reamostrado**: {serie['n_original']:,} leituras agrupadas em blocos de "
-            f"{serie['fator']} ({serie['n_pontos']:,} pontos por grafico). A linha e a "
-            "mediana do bloco; a faixa clara e o intervalo min-max, que preserva os "
-            "picos — em vibracao o pico raro e o sinal, nao o ruido.".replace(",", ".")
+            f"**Reamostrado**: {detalhe}. A linha e a mediana do bloco; a faixa clara "
+            "e o intervalo min-max, que preserva os picos — em vibracao o pico raro e "
+            "o sinal, nao o ruido."
         )
 
-    for coluna in colunas_serie:
-        d = serie["dados"][serie["dados"]["coluna"] == coluna]
-        if d.empty:
-            continue
+    for coluna_dado in colunas_serie:
+        st.markdown(f"**{coluna_dado}**")
+        for coluna_ui, rotulo in zip(st.columns(n_sel), selecionados):
+            serie = series[rotulo]
+            d = serie["dados"][serie["dados"]["coluna"] == coluna_dado]
+            with coluna_ui:
+                st.caption(rotulo)
+                if d.empty:
+                    st.caption("sem dados")
+                    continue
 
-        # `detail="sessao"` faz o Vega desenhar uma linha por sessao em vez de
-        # uma so atravessando os gaps.
-        base_ch = alt.Chart(d).encode(
-            x=alt.X("created_at:T", title=None),
-            detail=alt.Detail("sessao:N"),
-        )
+                # `detail="sessao"` faz o Vega desenhar uma linha por sessao em
+                # vez de uma so atravessando os gaps.
+                base_ch = alt.Chart(d).encode(
+                    x=alt.X("created_at:T", title=None),
+                    detail=alt.Detail("sessao:N"),
+                )
+                faixa = base_ch.mark_area(opacity=0.25, color=cor_de[rotulo]).encode(
+                    y=alt.Y("minimo:Q", title=None, scale=alt.Scale(zero=False)),
+                    y2="maximo:Q",
+                )
+                linha = base_ch.mark_line(strokeWidth=1.3, color=cor_de[rotulo]).encode(
+                    y=alt.Y("valor:Q", title=None, scale=alt.Scale(zero=False)),
+                    tooltip=[
+                        alt.Tooltip("created_at:T", title="instante",
+                                    format="%d/%m/%y %H:%M:%S"),
+                        alt.Tooltip("sessao:Q", title="sessao"),
+                        alt.Tooltip("valor:Q", title="mediana", format=".4f"),
+                        alt.Tooltip("minimo:Q", format=".4f"),
+                        alt.Tooltip("maximo:Q", format=".4f"),
+                    ],
+                )
+                grafico = (faixa + linha) if serie["reamostrado"] else linha
+                st.altair_chart(grafico.properties(height=200), width="stretch")
 
-        faixa = base_ch.mark_area(opacity=0.25, color="#d1495b").encode(
-            y=alt.Y("minimo:Q", title=coluna, scale=alt.Scale(zero=False)),
-            y2="maximo:Q",
-        )
-        linha = base_ch.mark_line(strokeWidth=1.4, color="#d1495b").encode(
-            y=alt.Y("valor:Q", title=coluna, scale=alt.Scale(zero=False)),
-            tooltip=[
-                alt.Tooltip("created_at:T", title="instante", format="%d/%m/%y %H:%M:%S"),
-                alt.Tooltip("sessao:Q", title="sessao"),
-                alt.Tooltip("valor:Q", title="mediana", format=".4f"),
-                alt.Tooltip("minimo:Q", format=".4f"),
-                alt.Tooltip("maximo:Q", format=".4f"),
-            ],
-        )
+st.divider()
 
-        grafico = (faixa + linha) if serie["reamostrado"] else linha
-        st.altair_chart(grafico.properties(height=220), width="stretch")
-
-with st.expander("Base do rotulo em ordem cronologica"):
+# --- 2e. Outliers ----------------------------------------------------------
+with st.expander("Outliers dentro de cada rotulo (criterio IQR, apenas reportado)"):
     st.caption(
-        "`sessao` identifica a campanha de coleta; `delta_s` e o intervalo desde a "
-        "leitura anterior dentro da sessao (vazio na primeira linha de cada sessao)."
+        "Limites recalculados **dentro** de cada rotulo. Isso separa a variacao "
+        "natural da classe de um pico que destoa da propria classe — globalmente, "
+        "toda leitura de um defeito severo pareceria outlier, o que nao ajuda."
     )
-    colunas_tabela = (
-        ["created_at", "sessao", "delta_s", "id", "fault"]
-        + [c for c in numericas if c in ordenado.columns]
-    )
-    st.dataframe(
-        ordenado[colunas_tabela],
-        hide_index=True,
-        height=400,
-        column_config={
-            "created_at": st.column_config.DatetimeColumn(
-                "created_at", format="DD/MM/YY HH:mm:ss.SSS"
-            ),
-            "delta_s": st.column_config.NumberColumn("delta (s)", format="%.2f"),
-        },
-    )
-    st.download_button(
-        "Baixar CSV ordenado",
-        ordenado[colunas_tabela].to_csv(index=False).encode("utf-8"),
-        file_name=f"{escolhido}_cronologico.csv",
-        mime="text/csv",
-    )
+    for coluna, rotulo in zip(st.columns(n_sel), selecionados):
+        with coluna:
+            st.caption(f"**{rotulo}**")
+            st.dataframe(
+                D.r_outliers_do_rotulo(rotulo)[
+                    ["coluna", "mediana", "lim_inferior", "lim_superior",
+                     "min", "max", "outliers", "pct_outliers"]
+                ],
+                hide_index=True,
+                height=320,
+            )
 
-# --- 2e. Outliers dentro do rotulo ----------------------------------------
-with st.expander("Outliers dentro deste rotulo (criterio IQR, apenas reportado)"):
+# --- 2f. Base ordenada -----------------------------------------------------
+with st.expander("Base de cada rotulo em ordem cronologica"):
     st.caption(
-        "Limites recalculados **dentro** do rotulo. Isso separa a variacao natural "
-        "da classe de um pico que destoa da propria classe — globalmente, toda "
-        "leitura de um defeito severo pareceria outlier, o que nao ajuda."
+        "Em abas, e nao lado a lado: sao 26 colunas por rotulo, e dividir a largura "
+        "deixaria a tabela ilegivel. `sessao` identifica a campanha de coleta; "
+        "`delta_s` e o intervalo desde a leitura anterior dentro da sessao."
     )
-    st.dataframe(
-        D.r_outliers_do_rotulo(escolhido)[
-            [
-                "coluna",
-                "mediana",
-                "q1",
-                "q3",
-                "lim_inferior",
-                "lim_superior",
-                "min",
-                "max",
-                "outliers",
-                "pct_outliers",
-            ]
-        ],
-        hide_index=True,
-        height=320,
-    )
+    for aba, rotulo in zip(st.tabs(selecionados), selecionados):
+        with aba:
+            ordenado = ordenado_de[rotulo]
+            colunas_tabela = (
+                ["created_at", "sessao", "delta_s", "id", "fault"]
+                + [c for c in numericas if c in ordenado.columns]
+            )
+            st.dataframe(
+                ordenado[colunas_tabela],
+                hide_index=True,
+                height=400,
+                column_config={
+                    "created_at": st.column_config.DatetimeColumn(
+                        "created_at", format="DD/MM/YY HH:mm:ss.SSS"
+                    ),
+                    "delta_s": st.column_config.NumberColumn("delta (s)", format="%.2f"),
+                },
+            )
+            st.download_button(
+                "Baixar CSV ordenado",
+                ordenado[colunas_tabela].to_csv(index=False).encode("utf-8"),
+                file_name=f"{rotulo}_cronologico.csv",
+                mime="text/csv",
+                key=f"dl_{rotulo}",
+            )
 
 st.divider()
 
