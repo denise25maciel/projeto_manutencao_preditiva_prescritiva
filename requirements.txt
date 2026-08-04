@@ -1,0 +1,35 @@
+# Manutencao Prescritiva — dependencias
+#
+# Instalacao:  pip install -r requirements.txt
+#
+# Os limites inferiores sao os que o projeto realmente usa; os superiores
+# travam a proxima major, onde a API pode quebrar. Ambiente validado:
+# Python 3.14.4 no Windows 11.
+
+# --- Dados -----------------------------------------------------------------
+pandas>=2.2,<4
+numpy>=1.26,<3
+pyarrow>=15.0            # serializacao das tabelas para a UI
+
+# --- Interface -------------------------------------------------------------
+streamlit>=1.36,<2
+altair>=5.3,<7           # graficos; a UI nao usa matplotlib
+
+# --- Configuracao ----------------------------------------------------------
+pyyaml>=6.0,<7           # data/fault_map.yaml (Parte 1)
+
+# --- Notebooks -------------------------------------------------------------
+# Fora do runtime: nem o modulo nem a UI dependem destes.
+jupyterlab>=4.0,<5
+matplotlib>=3.8,<4
+
+# ---------------------------------------------------------------------------
+# Entram nas proximas partes — ainda nao instalados para manter o ambiente
+# leve. Estao mapeados como extras no pyproject.toml.
+#
+#   Parte 2   sqlalchemy>=2.0
+#   Parte 3   scikit-learn>=1.5
+#   Parte 4   sentence-transformers, pypdf
+#   Parte 5   ollama
+#   Parte 6   fastapi, uvicorn, httpx
+# ---------------------------------------------------------------------------

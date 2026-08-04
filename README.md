@@ -23,45 +23,132 @@ decisão das equipes técnicas.
 | 5 | LLM local (Ollama) | ⬜ |
 | 6 | API FastAPI + deploy | ⬜ |
 
-## Como rodar
+## Configuração do ambiente
 
-Requer Python 3.11+.
+Requer **Python 3.11+**. Ambiente validado: Python 3.14.4 no Windows 11.
 
-```bash
-pip install -e .          # runtime da Parte 0
-pip install -e ".[dev]"   # + notebooks e testes
-```
-
-O dataset bruto **não está no repositório** (é dado da empresa). Coloque o
-`banner.csv` em `data/raw/` ou aponte a variável de ambiente:
+### 1. Clonar e entrar no diretório
 
 ```bash
-export MP_CSV=/caminho/para/banner.csv     # Linux/macOS
-$env:MP_CSV = "C:\caminho\para\banner.csv" # PowerShell
+git clone <url-do-repositorio>
+cd projeto_manutencao_preditiva_prescritiva
 ```
 
-O `src/mp/config.py` também procura automaticamente em `data/raw/`, `docs/` e
-`descricao_desafio/`.
+### 2. Criar e ativar o ambiente virtual
 
-### Interface
+O venv isola as dependências do projeto do Python do sistema. `.venv/` está no
+`.gitignore` — cada máquina cria o seu.
+
+```powershell
+# Windows — PowerShell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+```bash
+# Windows — Git Bash
+python -m venv .venv
+source .venv/Scripts/activate
+```
+
+```bash
+# Linux / macOS
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+> Se o PowerShell recusar a ativação com `execution of scripts is disabled`, rode
+> uma vez: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+Com o venv ativo o prompt fica prefixado com `(.venv)`. Confira com:
+
+```bash
+python -c "import sys; print(sys.prefix)"   # deve apontar para .../.venv
+```
+
+### 3. Instalar as dependências
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+O `requirements.txt` cobre o que a Parte 0 precisa: pandas, numpy, pyarrow,
+streamlit, altair, pyyaml — mais jupyterlab e matplotlib para os notebooks.
+As bibliotecas das partes seguintes (SQLAlchemy, scikit-learn, FastAPI, Ollama)
+estão listadas em comentário no fim do arquivo e mapeadas como extras no
+`pyproject.toml`; entram quando cada parte for implementada.
+
+> O import de `src/mp/` funciona sem instalar o pacote — `ui/_dados.py` e o
+> notebook resolvem o caminho sozinhos. Se preferir o pacote instalado, use
+> `pip install -e .` (opcional).
+
+### 4. Disponibilizar o dataset
+
+O dataset bruto **não está no repositório** — é dado da empresa, bloqueado pelo
+`.gitignore`. Coloque o `banner.csv` em `data/raw/`:
+
+```bash
+mkdir -p data/raw
+cp /caminho/para/banner.csv data/raw/
+```
+
+Ou aponte a variável de ambiente, sem mover o arquivo:
+
+```bash
+export MP_CSV=/caminho/para/banner.csv       # Linux/macOS/Git Bash
+```
+```powershell
+$env:MP_CSV = "C:\caminho\para\banner.csv"   # PowerShell
+```
+
+O [`src/mp/config.py`](src/mp/config.py) procura, nesta ordem: `MP_CSV`,
+`data/raw/`, `docs/`, `descricao_desafio/`, `teste_industria/`. Se não achar,
+a UI mostra a mensagem explicando onde colocar em vez de quebrar.
+
+## Como executar
+
+Com o venv ativo, a partir da **raiz do projeto**:
+
+### Interface Streamlit
 
 ```bash
 streamlit run ui/app.py
 ```
 
-Três telas:
+Abre em `http://localhost:8501`. Três telas no menu lateral:
 
-- **Visão geral** — números de cabeçalho e os achados que contrariam a suposição inicial
-- **Análise de Falhas** — valores únicos de `fault`; ao selecionar um rótulo, mostra a
-  assinatura de vibração, o que o distingue do resto do dataset e a distribuição de
-  cada feature
-- **Qualidade dos Dados** — como o dado chegou: nulos por coluna, cadência de coleta,
-  colunas constantes e redundantes, duplicatas e outliers
+| Tela | O que mostra |
+|---|---|
+| **Visão geral** | Números de cabeçalho e os três achados que contrariam a suposição inicial |
+| **Análise de Falhas** | Valores únicos de `fault` com busca e filtro. Ao selecionar um rótulo: assinatura de vibração com quartis e CV, o que o distingue do resto do dataset, distribuição de cada feature e outliers dentro da classe |
+| **Qualidade dos Dados** | Como o dado chegou: nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
+
+O primeiro carregamento lê o CSV (~0,4 s para 166 mil linhas) e guarda em
+`@st.cache_data`; os cliques seguintes não releem o arquivo.
 
 ### Notebook
 
 ```bash
 jupyter lab notebooks/01_eda.ipynb
+```
+
+Ou execute sem abrir a interface:
+
+```bash
+jupyter nbconvert --to notebook --execute notebooks/01_eda.ipynb --stdout > /dev/null
+```
+
+### Usar o módulo direto
+
+```python
+import sys; sys.path.insert(0, "src")
+
+from mp.analysis import carregar, perfil_rotulos, assinaturas_por_rotulo
+
+df = carregar()
+perfil_rotulos(df)                          # rótulos, contagem, janela temporal
+assinaturas_por_rotulo(df, min_leituras=100)  # tabela de assinaturas
 ```
 
 ## Arquitetura
@@ -96,10 +183,11 @@ reimplementam nada. Nada em produção depende deles.
 │   ├── config.py             # todo limiar e caminho
 │   └── analysis/             # loader, profiling, quality, signatures
 ├── ui/
-│   ├── app.py
+│   ├── app.py                # streamlit run ui/app.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
 │   └── pages/
-└── pyproject.toml
+├── requirements.txt          # instalação do ambiente
+└── pyproject.toml            # metadados + extras das partes seguintes
 ```
 
 > **Nota de arquitetura.** A partir da Parte 5 a UI passa a falar com a API por HTTP,
