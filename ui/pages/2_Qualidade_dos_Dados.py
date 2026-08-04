@@ -70,14 +70,16 @@ else:
         width="stretch",
     )
 
+# `pct_nulos` e `preenchidos` sao redundantes na tela: com zero nulos, o
+# percentual e sempre 0,000% e `preenchidos` repete o total de linhas em todas
+# as 26 colunas. Continuam no retorno de `nulos_por_coluna` porque o grafico
+# acima usa o percentual quando existe nulo.
 st.dataframe(
-    nulos,
+    nulos[["coluna", "tipo", "nulos", "distintos"]],
     hide_index=True,
     height=330,
     column_config={
         "nulos": st.column_config.NumberColumn("nulos", format="%d"),
-        "pct_nulos": st.column_config.NumberColumn("% nulos", format="%.3f%%"),
-        "preenchidos": st.column_config.NumberColumn("preenchidos", format="%d"),
         "distintos": st.column_config.NumberColumn(
             "valores distintos",
             format="%d",
