@@ -1,0 +1,107 @@
+# ---------------------------------------------------------------------------
+# Dados da empresa — NUNCA versionar
+# ---------------------------------------------------------------------------
+# Insumos brutos (CSV de sensores, PDFs de procedimentos)
+data/raw/
+teste_industria/
+
+# Banco SQLite e derivados
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/interim/
+data/processed/
+data/exports/
+
+# Artefatos de modelo / embeddings materializados
+*.gguf
+*.safetensors
+*.onnx
+models/
+artifacts/
+*.npy
+*.npz
+*.joblib
+*.pkl
+
+# Planilhas e dados soltos em qualquer lugar do repo
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+
+# PDFs (documentação técnica do cliente)
+*.pdf
+
+# Exceções: decisões curadas, versionadas de propósito
+!data/fault_map.yaml
+!data/**/*.example.csv
+!data/**/*.sample.json
+
+# ---------------------------------------------------------------------------
+# Segredos
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+credentials.*
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Ferramentas
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+notebooks/**/*-checkpoint.ipynb
+
+# ---------------------------------------------------------------------------
+# Editores e SO
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Logs e temporários
+# ---------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+.cache/
