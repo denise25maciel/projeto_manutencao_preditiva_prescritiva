@@ -1,8 +1,9 @@
 """Valores unicos de `fault` e a assinatura de vibracao de cada um.
 
-A secao 2 compara ate 4 rotulos lado a lado: uma coluna por rotulo, mesma
-analise em cada uma. Comparar e o ponto — a Parte 3 vai precisar saber quais
-classes o kNN tende a confundir, e isso so aparece olhando duas juntas.
+A secao 2 compara ate 4 rotulos. A ordem dos blocos e proposital: primeiro o
+comportamento ao longo do tempo (todas as colunas empilhadas), depois o resumo
+em medianas. Ver a serie antes da estatistica evita ler uma mediana sem saber
+se ela descreve um patamar estavel ou a media de dois regimes distintos.
 """
 
 from __future__ import annotations
@@ -133,8 +134,8 @@ selecionados = st.multiselect(
     default=opcoes[:1],
     max_selections=MAX_ROTULOS,
     format_func=lambda r: f"{r}  ({_leituras[r]} leituras)",
-    help=f"Ate {MAX_ROTULOS} rotulos. Cada um vira uma coluna, com a mesma analise "
-         "repetida lado a lado.",
+    help=f"Ate {MAX_ROTULOS} rotulos. As series de todos aparecem no mesmo grafico, "
+         "uma cor por rotulo.",
 )
 
 if not selecionados:
@@ -148,6 +149,9 @@ cor_de = {r: PALETA[i % len(PALETA)] for i, r in enumerate(selecionados)}
 
 info_de = {r: tabela[tabela["fault"] == r].iloc[0] for r in selecionados}
 ordenado_de = {r: D.r_ordenado(r) for r in selecionados}
+
+numericas = D.r_numericas()
+padrao = "z_rms_velocity_mm_s" if "z_rms_velocity_mm_s" in numericas else numericas[0]
 
 # --- 2a. Cabecalho comparativo ---------------------------------------------
 st.subheader("Panorama")
@@ -178,7 +182,180 @@ if estados:
 
 st.divider()
 
-# --- 2b. Assinatura comparada ----------------------------------------------
+# --- 2b. Serie temporal ----------------------------------------------------
+st.subheader("Serie temporal")
+
+st.caption(
+    "Eixo X = **data e hora reais da coleta**, em UTC, como gravadas em `created_at`. "
+    "Nada e normalizado nem deslocado. O arquivo bruto nao esta em ordem cronologica — "
+    "a ordenacao e feita aqui. Intervalos maiores que "
+    f"{int(D.config.GAP_NOVA_SESSAO_S)} s marcam fronteira de sessao, e a linha "
+    "**quebra** nessas fronteiras: ligar o fim de uma sessao ao inicio da seguinte "
+    "inventaria uma transicao que nunca existiu."
+)
+
+# Janela real de cada rotulo. Precisa ficar visivel porque os rotulos foram
+# coletados em campanhas diferentes: no eixo de tempo real eles aparecem lado a
+# lado, nao sobrepostos, e isso confunde quem espera curvas concorrentes.
+janelas = pd.DataFrame(
+    [
+        {
+            "rotulo": r,
+            "inicio": ordenado_de[r]["created_at"].iloc[0],
+            "fim": ordenado_de[r]["created_at"].iloc[-1],
+            "sessoes": int(ordenado_de[r]["sessao"].nunique()),
+            "leituras": len(ordenado_de[r]),
+        }
+        for r in selecionados
+    ]
+)
+
+st.dataframe(
+    janelas,
+    hide_index=True,
+    column_config={
+        "inicio": st.column_config.DatetimeColumn("1a leitura (UTC)",
+                                                  format="DD/MM/YYYY HH:mm:ss"),
+        "fim": st.column_config.DatetimeColumn("ultima leitura (UTC)",
+                                               format="DD/MM/YYYY HH:mm:ss"),
+        "sessoes": st.column_config.NumberColumn("sessoes", format="%d"),
+        "leituras": st.column_config.NumberColumn("leituras", format="%d"),
+    },
+)
+
+if n_sel > 1:
+    # Ha sobreposicao temporal entre algum par de rotulos?
+    sobrepoe = any(
+        (janelas.loc[i, "inicio"] <= janelas.loc[j, "fim"])
+        and (janelas.loc[j, "inicio"] <= janelas.loc[i, "fim"])
+        for i in range(n_sel)
+        for j in range(i + 1, n_sel)
+    )
+    if not sobrepoe:
+        st.warning(
+            "**Os rotulos selecionados nao compartilham janela de coleta.** No eixo de "
+            "tempo real eles aparecem em trechos separados, nao como curvas concorrentes. "
+            "Isso e o dado, nao um defeito do grafico: cada condicao foi gravada numa "
+            "campanha propria. Use o zoom (roda do mouse) para entrar em cada trecho."
+        )
+    else:
+        st.info(
+            "Os rotulos tem janelas de coleta que se cruzam — as curvas vao aparecer "
+            "sobrepostas nos trechos em comum."
+        )
+
+col_todas, col_faixa = st.columns([1, 1])
+with col_todas:
+    todas_colunas = st.checkbox(
+        "Todas as colunas numericas",
+        value=True,
+        help="Desmarque para escolher um subconjunto e ganhar resolucao — o orcamento "
+             "de pontos e dividido entre os graficos.",
+    )
+with col_faixa:
+    mostrar_faixa = st.checkbox(
+        "Mostrar faixa min-max",
+        value=False,
+        help="A faixa preserva os picos que a reamostragem esconderia. Com muitas "
+             "series ela polui a leitura, por isso vem desligada.",
+    )
+
+if todas_colunas:
+    colunas_serie = numericas
+else:
+    colunas_serie = st.multiselect("Colunas para plotar", numericas, default=[padrao])
+
+if not colunas_serie:
+    st.caption("Selecione ao menos uma coluna.")
+else:
+    n_col = len(colunas_serie)
+
+    # Orcamento global: sao ate n_sel x n_col series simultaneas na pagina, e
+    # cada ponto vira um objeto JSON no navegador. Dividimos o teto da pagina
+    # entre elas e respeitamos o piso, para a linha nao perder a forma.
+    orcamento = int(
+        min(
+            D.config.MAX_PONTOS_SERIE,
+            max(D.config.MIN_PONTOS_SERIE, D.config.MAX_PONTOS_PAGINA // (n_sel * n_col)),
+        )
+    )
+    series = {
+        r: D.r_serie_temporal(r, tuple(colunas_serie), orcamento) for r in selecionados
+    }
+
+    reamostrados = [r for r in selecionados if series[r]["reamostrado"]]
+    if reamostrados:
+        detalhe = ", ".join(
+            f"`{r}` ({series[r]['n_original']:,} → {series[r]['n_pontos']:,} pontos, "
+            f"blocos de {series[r]['fator']})".replace(",", ".")
+            for r in reamostrados
+        )
+        st.caption(
+            f"**Reamostrado** — {n_col} coluna(s) x {n_sel} rotulo(s) = "
+            f"{n_col * n_sel} series, com orcamento de {orcamento} pontos cada: "
+            f"{detalhe}. A linha e a mediana do bloco, e cada ponto carrega o "
+            "`created_at` real da primeira leitura do bloco — nenhum instante e "
+            "inventado. Para mais resolucao, desmarque *Todas as colunas*."
+        )
+
+    escala_cor = alt.Scale(domain=selecionados, range=[cor_de[r] for r in selecionados])
+    # Com 23 graficos empilhados, 260px cada dariam 6 mil pixels de rolagem.
+    altura = 260 if n_col <= 4 else 170
+
+    for coluna_dado in colunas_serie:
+        # Um DataFrame com todos os rotulos: e o que permite sobrepor as series
+        # num grafico so, cada uma com sua cor.
+        partes = []
+        for r in selecionados:
+            d = series[r]["dados"]
+            d = d[d["coluna"] == coluna_dado]
+            if not d.empty:
+                partes.append(d.assign(rotulo=r))
+        if not partes:
+            continue
+        junto = pd.concat(partes, ignore_index=True)
+
+        st.markdown(f"**{coluna_dado}**")
+
+        # O Vega agrupa as linhas pela combinacao dos canais discretos: `color`
+        # (rotulo) e `detail` (sessao). Isso da uma linha por par
+        # rotulo-sessao — cores distintas entre rotulos, e quebra nos gaps.
+        base_ch = alt.Chart(junto).encode(
+            x=alt.X("created_at:T", title="data / hora da coleta (UTC)"),
+            color=alt.Color("rotulo:N", title=None, scale=escala_cor,
+                            legend=alt.Legend(orient="bottom")),
+            detail=alt.Detail("sessao:N"),
+        )
+
+        linha = base_ch.mark_line(strokeWidth=1.4).encode(
+            y=alt.Y("valor:Q", title=coluna_dado, scale=alt.Scale(zero=False)),
+            tooltip=[
+                alt.Tooltip("rotulo:N", title="rotulo"),
+                alt.Tooltip("created_at:T", title="instante (UTC)",
+                            format="%d/%m/%Y %H:%M:%S"),
+                alt.Tooltip("sessao:Q", title="sessao"),
+                alt.Tooltip("valor:Q", title="mediana", format=".4f"),
+                alt.Tooltip("minimo:Q", title="min", format=".4f"),
+                alt.Tooltip("maximo:Q", title="max", format=".4f"),
+            ],
+        )
+
+        if mostrar_faixa and reamostrados:
+            faixa = base_ch.mark_area(opacity=0.18).encode(
+                y=alt.Y("minimo:Q", title=coluna_dado, scale=alt.Scale(zero=False)),
+                y2="maximo:Q",
+            )
+            grafico = faixa + linha
+        else:
+            grafico = linha
+
+        # `.interactive()` liga zoom e pan no eixo do tempo — necessario quando
+        # os rotulos estao a semanas de distancia e cada sessao vira um risco.
+        st.altair_chart(grafico.properties(height=altura).interactive(), width="stretch")
+
+st.divider()
+
+# --- 2c. Assinatura comparada ----------------------------------------------
 st.subheader("Assinatura: o que distingue cada rotulo")
 
 comparacoes = {r: D.r_comparacao(r) for r in selecionados}
@@ -193,7 +370,7 @@ for r in selecionados:
     comparada[f"Δ% {r}"] = comparada["feature"].map(c["desvio_pct"])
 
 # Ordem compartilhada por todos os blocos: features que mais separam ALGUM dos
-# rotulos seleccionados vem primeiro. Sem ordem comum, os graficos lado a lado
+# rotulos selecionados vem primeiro. Sem ordem comum, os graficos lado a lado
 # ficariam com linhas trocadas e a comparacao visual nao funcionaria.
 colunas_desvio = [f"Δ% {r}" for r in selecionados]
 comparada["_max_abs"] = comparada[colunas_desvio].abs().max(axis=1)
@@ -256,11 +433,9 @@ with st.expander("Estatistica detalhada por rotulo (quartis, desvio, CV)"):
 
 st.divider()
 
-# --- 2c. Distribuicao de uma feature ---------------------------------------
+# --- 2d. Distribuicao de uma feature ---------------------------------------
 st.subheader("Distribuicao de uma feature")
 
-numericas = D.r_numericas()
-padrao = "z_rms_velocity_mm_s" if "z_rms_velocity_mm_s" in numericas else numericas[0]
 feature = st.selectbox("Feature", numericas, index=numericas.index(padrao))
 
 serie_global = D.dados()[feature].to_numpy()
@@ -319,166 +494,6 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
             )
             .properties(height=260),
             width="stretch",
-        )
-
-st.divider()
-
-# --- 2d. Serie temporal ----------------------------------------------------
-st.subheader("Serie temporal")
-
-st.caption(
-    "Eixo X = **data e hora reais da coleta**, em UTC, como gravadas em `created_at`. "
-    "Nada e normalizado nem deslocado. O arquivo bruto nao esta em ordem cronologica — "
-    "a ordenacao e feita aqui. Intervalos maiores que "
-    f"{int(D.config.GAP_NOVA_SESSAO_S)} s marcam fronteira de sessao, e a linha "
-    "**quebra** nessas fronteiras: ligar o fim de uma sessao ao inicio da seguinte "
-    "inventaria uma transicao que nunca existiu."
-)
-
-# Janela real de cada rotulo. Precisa ficar visivel porque os rotulos foram
-# coletados em campanhas diferentes: no eixo de tempo real eles aparecem lado a
-# lado, nao sobrepostos, e isso confunde quem espera curvas concorrentes.
-janelas = pd.DataFrame(
-    [
-        {
-            "rotulo": r,
-            "inicio": ordenado_de[r]["created_at"].iloc[0],
-            "fim": ordenado_de[r]["created_at"].iloc[-1],
-            "sessoes": int(ordenado_de[r]["sessao"].nunique()),
-            "leituras": len(ordenado_de[r]),
-        }
-        for r in selecionados
-    ]
-)
-
-st.dataframe(
-    janelas,
-    hide_index=True,
-    column_config={
-        "inicio": st.column_config.DatetimeColumn("1a leitura (UTC)",
-                                                  format="DD/MM/YYYY HH:mm:ss"),
-        "fim": st.column_config.DatetimeColumn("ultima leitura (UTC)",
-                                               format="DD/MM/YYYY HH:mm:ss"),
-        "sessoes": st.column_config.NumberColumn("sessoes", format="%d"),
-        "leituras": st.column_config.NumberColumn("leituras", format="%d"),
-    },
-)
-
-if n_sel > 1:
-    # Ha sobreposicao temporal entre algum par de rotulos?
-    sobrepoe = any(
-        (janelas.loc[i, "inicio"] <= janelas.loc[j, "fim"])
-        and (janelas.loc[j, "inicio"] <= janelas.loc[i, "fim"])
-        for i in range(n_sel)
-        for j in range(i + 1, n_sel)
-    )
-    if not sobrepoe:
-        st.warning(
-            "**Os rotulos selecionados nao compartilham janela de coleta.** No eixo de "
-            "tempo real eles aparecem em trechos separados, nao como curvas concorrentes. "
-            "Isso e o dado, nao um defeito do grafico: cada condicao foi gravada numa "
-            "campanha propria. Use o zoom (roda do mouse) para entrar em cada trecho."
-        )
-    else:
-        st.info(
-            "Os rotulos tem janelas de coleta que se cruzam — as curvas vao aparecer "
-            "sobrepostas nos trechos em comum."
-        )
-
-colunas_serie = st.multiselect(
-    "Colunas para plotar",
-    numericas,
-    default=[padrao],
-    help="Uma coluna por grafico, empilhados na vertical — escalas diferentes num "
-         "eixo so esconderiam a variacao da menor.",
-)
-
-if not colunas_serie:
-    st.caption("Selecione ao menos uma coluna.")
-else:
-    # Orcamento de pontos dividido entre os rotulos: todos vao para o MESMO
-    # grafico, e o payload enviado ao navegador cresce com o numero de series.
-    orcamento = max(300, D.config.MAX_PONTOS_SERIE // n_sel)
-    series = {
-        r: D.r_serie_temporal(r, tuple(colunas_serie), orcamento) for r in selecionados
-    }
-
-    mostrar_faixa = st.checkbox(
-        "Mostrar faixa min-max",
-        value=(n_sel == 1),
-        help="Com varios rotulos as faixas se cruzam e poluem a leitura. So as "
-             "linhas ja bastam para comparar tendencia.",
-    )
-
-    reamostrados = [r for r in selecionados if series[r]["reamostrado"]]
-    if reamostrados:
-        detalhe = ", ".join(
-            f"`{r}` ({series[r]['n_original']:,} -> {series[r]['n_pontos']:,} pontos, "
-            f"blocos de {series[r]['fator']})".replace(",", ".")
-            for r in reamostrados
-        )
-        st.caption(
-            f"**Reamostrado**: {detalhe}. A linha e a mediana do bloco; a faixa clara "
-            "e o intervalo min-max, que preserva os picos — em vibracao o pico raro e "
-            "o sinal, nao o ruido. Os instantes continuam sendo os reais: cada ponto "
-            "carrega o `created_at` da primeira leitura do bloco."
-        )
-
-    escala_cor = alt.Scale(
-        domain=selecionados, range=[cor_de[r] for r in selecionados]
-    )
-
-    for coluna_dado in colunas_serie:
-        # Um DataFrame com todos os rotulos: e o que permite sobrepor as series
-        # num grafico so, cada uma com sua cor.
-        partes = []
-        for r in selecionados:
-            d = series[r]["dados"]
-            d = d[d["coluna"] == coluna_dado]
-            if not d.empty:
-                partes.append(d.assign(rotulo=r))
-        if not partes:
-            continue
-        junto = pd.concat(partes, ignore_index=True)
-
-        st.markdown(f"**{coluna_dado}**")
-
-        # O Vega agrupa as linhas pela combinacao dos canais discretos: `color`
-        # (rotulo) e `detail` (sessao). Isso da uma linha por par
-        # rotulo-sessao — cores distintas entre rotulos, e quebra nos gaps.
-        base_ch = alt.Chart(junto).encode(
-            x=alt.X("created_at:T", title="data / hora da coleta (UTC)"),
-            color=alt.Color("rotulo:N", title=None, scale=escala_cor,
-                            legend=alt.Legend(orient="bottom")),
-            detail=alt.Detail("sessao:N"),
-        )
-
-        linha = base_ch.mark_line(strokeWidth=1.4).encode(
-            y=alt.Y("valor:Q", title=coluna_dado, scale=alt.Scale(zero=False)),
-            tooltip=[
-                alt.Tooltip("rotulo:N", title="rotulo"),
-                alt.Tooltip("created_at:T", title="instante (UTC)",
-                            format="%d/%m/%Y %H:%M:%S"),
-                alt.Tooltip("sessao:Q", title="sessao"),
-                alt.Tooltip("valor:Q", title="mediana", format=".4f"),
-                alt.Tooltip("minimo:Q", title="min", format=".4f"),
-                alt.Tooltip("maximo:Q", title="max", format=".4f"),
-            ],
-        )
-
-        if mostrar_faixa and reamostrados:
-            faixa = base_ch.mark_area(opacity=0.18).encode(
-                y=alt.Y("minimo:Q", title=coluna_dado, scale=alt.Scale(zero=False)),
-                y2="maximo:Q",
-            )
-            grafico = faixa + linha
-        else:
-            grafico = linha
-
-        # `.interactive()` liga zoom e pan no eixo do tempo — necessario quando
-        # os rotulos estao a semanas de distancia e cada sessao vira um risco.
-        st.altair_chart(
-            grafico.properties(height=260).interactive(), width="stretch"
         )
 
 st.divider()

@@ -110,6 +110,16 @@ GAP_NOVA_SESSAO_S = 60.0
 # preserva os picos — que em vibracao sao o sinal, nao ruido.
 MAX_PONTOS_SERIE = 3000
 
+# Teto de pontos da PAGINA inteira, somando todos os graficos.
+# A tela de analise plota as 23 colunas numericas empilhadas, para ate 4
+# rotulos: sao ate 92 series simultaneas. Sem um teto global, o navegador
+# receberia centenas de milhares de pontos e travaria. O orcamento por serie
+# vira MAX_PONTOS_PAGINA / (rotulos x colunas), limitado a MAX_PONTOS_SERIE.
+MAX_PONTOS_PAGINA = 30_000
+
+# Piso por serie: abaixo disso a linha perde a forma e o grafico nao informa.
+MIN_PONTOS_SERIE = 200
+
 # --------------------------------------------------------------------------
 # Qualidade / outliers
 # --------------------------------------------------------------------------
