@@ -140,6 +140,105 @@ def taxa_amostragem(df: pd.DataFrame) -> dict:
     }
 
 
+def ordenar_por_tempo(df: pd.DataFrame, rotulo: str | None = None) -> pd.DataFrame:
+    """Recorta um rotulo e devolve suas leituras em ordem cronologica.
+
+    Acrescenta duas colunas derivadas:
+
+    - `sessao` — sessoes de coleta separadas por um intervalo maior que
+      `GAP_NOVA_SESSAO_S`. O arquivo nao esta em ordem e mistura campanhas
+      gravadas com semanas de distancia; sem marcar a fronteira, qualquer
+      grafico de linha ligaria o fim de uma sessao ao inicio de outra e
+      inventaria uma transicao que nunca existiu.
+    - `delta_s` — intervalo desde a leitura anterior DENTRO da sessao.
+    """
+    tempo = config.COLUNA_TEMPO
+    sub = df if rotulo is None else df[df[config.COLUNA_ROTULO] == rotulo]
+    sub = sub.sort_values(tempo, kind="stable").reset_index(drop=True)
+
+    if sub.empty:
+        return sub.assign(sessao=pd.Series(dtype=int), delta_s=pd.Series(dtype=float))
+
+    gap = sub[tempo].diff().dt.total_seconds()
+    # O primeiro gap e NaN; `NaN > x` e False, entao a primeira linha cai na
+    # sessao 0 sem tratamento especial.
+    sub["sessao"] = (gap > config.GAP_NOVA_SESSAO_S).cumsum().astype(int)
+    sub["delta_s"] = gap.where(gap <= config.GAP_NOVA_SESSAO_S)
+    return sub
+
+
+def serie_temporal(
+    df: pd.DataFrame,
+    rotulo: str,
+    colunas: list[str],
+    max_pontos: int | None = None,
+) -> dict:
+    """Serie temporal de um rotulo, pronta para plotar.
+
+    Devolve formato longo — `[created_at, sessao, coluna, valor, minimo, maximo]` —
+    porque e o que o Altair consome direto, com `coluna` virando facet.
+
+    **Reamostragem.** Um rotulo pode ter 17 mil leituras; mandar tudo para o
+    navegador trava a pagina. Acima de `max_pontos` agrupamos em blocos
+    consecutivos DENTRO de cada sessao e reportamos mediana, minimo e maximo do
+    bloco. A mediana da a tendencia; a faixa min-max preserva os picos, que em
+    vibracao sao justamente o que interessa — reamostrar so pela media apagaria
+    o impacto isolado que caracteriza defeito de rolamento.
+
+    Os blocos sao por POSICAO, nao por janela de tempo: as sessoes estao
+    separadas por ate 122 h, e uma janela temporal fixa produziria milhares de
+    blocos vazios entre elas.
+    """
+    max_pontos = max_pontos or config.MAX_PONTOS_SERIE
+    tempo = config.COLUNA_TEMPO
+
+    sub = ordenar_por_tempo(df, rotulo)
+    colunas = [c for c in colunas if c in sub.columns]
+    if sub.empty or not colunas:
+        vazio = pd.DataFrame(
+            columns=[tempo, "sessao", "coluna", "valor", "minimo", "maximo"]
+        )
+        return {"dados": vazio, "n_original": 0, "n_pontos": 0,
+                "reamostrado": False, "fator": 1, "sessoes": 0, "ordenado": sub}
+
+    n = len(sub)
+    fator = max(1, -(-n // max_pontos))  # ceil
+
+    if fator > 1:
+        # cumcount por sessao garante que um bloco nunca cruze a fronteira.
+        sub = sub.assign(_bloco=sub.groupby("sessao").cumcount() // fator)
+        chaves = ["sessao", "_bloco"]
+    else:
+        sub = sub.assign(_bloco=range(n))
+        chaves = ["sessao", "_bloco"]
+
+    partes = []
+    for c in colunas:
+        g = sub.groupby(chaves, sort=True)
+        bloco = g.agg(
+            **{
+                tempo: (tempo, "first"),
+                "valor": (c, "median"),
+                "minimo": (c, "min"),
+                "maximo": (c, "max"),
+            }
+        ).reset_index()
+        bloco["coluna"] = c
+        partes.append(bloco[[tempo, "sessao", "coluna", "valor", "minimo", "maximo"]])
+
+    dados = pd.concat(partes, ignore_index=True).sort_values([ "coluna", tempo])
+
+    return {
+        "dados": dados.reset_index(drop=True),
+        "n_original": n,
+        "n_pontos": int(len(dados) / len(colunas)),
+        "reamostrado": fator > 1,
+        "fator": fator,
+        "sessoes": int(sub["sessao"].nunique()),
+        "ordenado": sub.drop(columns="_bloco"),
+    }
+
+
 # --------------------------------------------------------------------------
 # Agrupamento sugerido de rotulos
 # --------------------------------------------------------------------------

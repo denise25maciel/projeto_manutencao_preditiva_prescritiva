@@ -105,6 +105,11 @@ TOLERANCIA_INTERVALO_S = 0.25  # +-0.25s ainda conta como cadencia nominal
 # atravessando a fronteira entre sessoes.
 GAP_NOVA_SESSAO_S = 60.0
 
+# Teto de pontos enviados ao navegador num grafico de serie temporal. Acima
+# disso a serie e reamostrada por blocos (mediana + faixa min-max), o que
+# preserva os picos — que em vibracao sao o sinal, nao ruido.
+MAX_PONTOS_SERIE = 3000
+
 # --------------------------------------------------------------------------
 # Qualidade / outliers
 # --------------------------------------------------------------------------

@@ -44,9 +44,11 @@ from mp.analysis import (  # noqa: E402
     duplicatas_consecutivas,
     janela_temporal,
     nulos_por_coluna,
+    ordenar_por_tempo,
     outliers_iqr,
     perfil_rotulos,
     resumo_geral,
+    serie_temporal,
     sugerir_familias,
     taxa_amostragem,
 )
@@ -160,6 +162,23 @@ def r_serie(rotulo: str, coluna: str):
 @st.cache_data(**CACHE)
 def r_numericas():
     return colunas_numericas(dados())
+
+
+# --- series temporais -------------------------------------------------------
+#
+# `colunas` chega como tupla porque o cache do Streamlit exige argumento
+# hasheavel — lista nao serve.
+
+
+@st.cache_data(**CACHE)
+def r_serie_temporal(rotulo: str, colunas: tuple[str, ...]):
+    return serie_temporal(dados(), rotulo, list(colunas))
+
+
+@st.cache_data(**CACHE)
+def r_ordenado(rotulo: str):
+    """Leituras do rotulo em ordem cronologica, com sessao e delta."""
+    return ordenar_por_tempo(dados(), rotulo)
 
 
 # --- documentos -------------------------------------------------------------

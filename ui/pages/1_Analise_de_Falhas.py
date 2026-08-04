@@ -236,7 +236,132 @@ st.altair_chart(
     width="stretch",
 )
 
-# --- 2d. Outliers dentro do rotulo ----------------------------------------
+# --- 2d. Serie temporal ----------------------------------------------------
+st.subheader("Serie temporal")
+
+ordenado = D.r_ordenado(escolhido)
+n_sessoes = int(ordenado["sessao"].nunique())
+
+s1, s2, s3, s4 = st.columns(4)
+s1.metric("Leituras", f"{len(ordenado):,}".replace(",", "."))
+s2.metric("Sessoes de coleta", n_sessoes)
+s3.metric("Inicio", f"{ordenado['created_at'].iloc[0]:%d/%m %H:%M}")
+s4.metric("Fim", f"{ordenado['created_at'].iloc[-1]:%d/%m %H:%M}")
+
+st.caption(
+    "As leituras deste rotulo, ordenadas por `created_at`. O arquivo bruto **nao** "
+    "esta em ordem cronologica — a ordenacao e feita aqui. Intervalos maiores que "
+    f"{int(D.config.GAP_NOVA_SESSAO_S)} s marcam fronteira de sessao, e a linha "
+    "**quebra** nessas fronteiras: ligar o fim de uma sessao ao inicio da seguinte "
+    "inventaria uma transicao que nunca existiu."
+)
+
+if n_sessoes > 1:
+    resumo_sessoes = (
+        ordenado.groupby("sessao")
+        .agg(leituras=("created_at", "size"),
+             inicio=("created_at", "min"),
+             fim=("created_at", "max"))
+        .reset_index()
+    )
+    resumo_sessoes["duracao_min"] = (
+        (resumo_sessoes["fim"] - resumo_sessoes["inicio"]).dt.total_seconds() / 60
+    ).round(1)
+    st.info(
+        f"Este rotulo aparece em **{n_sessoes} sessoes** de coleta distintas, "
+        f"cobrindo {info['span_horas']:.1f} h de ponta a ponta. Contar suas linhas "
+        "como ocorrencias somaria sessoes independentes."
+    )
+    with st.expander("Sessoes de coleta"):
+        st.dataframe(
+            resumo_sessoes, hide_index=True,
+            column_config={
+                "leituras": st.column_config.NumberColumn("leituras", format="%d"),
+                "inicio": st.column_config.DatetimeColumn("inicio", format="DD/MM/YY HH:mm:ss"),
+                "fim": st.column_config.DatetimeColumn("fim", format="DD/MM/YY HH:mm:ss"),
+                "duracao_min": st.column_config.NumberColumn("duracao (min)", format="%.1f"),
+            },
+        )
+
+colunas_serie = st.multiselect(
+    "Colunas para plotar",
+    numericas,
+    default=[padrao],
+    help="Cada coluna vira um grafico proprio — escalas diferentes num eixo so "
+         "esconderiam a variacao da menor.",
+)
+
+if not colunas_serie:
+    st.caption("Selecione ao menos uma coluna.")
+else:
+    serie = D.r_serie_temporal(escolhido, tuple(colunas_serie))
+
+    if serie["reamostrado"]:
+        st.caption(
+            f"**Reamostrado**: {serie['n_original']:,} leituras agrupadas em blocos de "
+            f"{serie['fator']} ({serie['n_pontos']:,} pontos por grafico). A linha e a "
+            "mediana do bloco; a faixa clara e o intervalo min-max, que preserva os "
+            "picos — em vibracao o pico raro e o sinal, nao o ruido.".replace(",", ".")
+        )
+
+    for coluna in colunas_serie:
+        d = serie["dados"][serie["dados"]["coluna"] == coluna]
+        if d.empty:
+            continue
+
+        # `detail="sessao"` faz o Vega desenhar uma linha por sessao em vez de
+        # uma so atravessando os gaps.
+        base_ch = alt.Chart(d).encode(
+            x=alt.X("created_at:T", title=None),
+            detail=alt.Detail("sessao:N"),
+        )
+
+        faixa = base_ch.mark_area(opacity=0.25, color="#d1495b").encode(
+            y=alt.Y("minimo:Q", title=coluna, scale=alt.Scale(zero=False)),
+            y2="maximo:Q",
+        )
+        linha = base_ch.mark_line(strokeWidth=1.4, color="#d1495b").encode(
+            y=alt.Y("valor:Q", title=coluna, scale=alt.Scale(zero=False)),
+            tooltip=[
+                alt.Tooltip("created_at:T", title="instante", format="%d/%m/%y %H:%M:%S"),
+                alt.Tooltip("sessao:Q", title="sessao"),
+                alt.Tooltip("valor:Q", title="mediana", format=".4f"),
+                alt.Tooltip("minimo:Q", format=".4f"),
+                alt.Tooltip("maximo:Q", format=".4f"),
+            ],
+        )
+
+        grafico = (faixa + linha) if serie["reamostrado"] else linha
+        st.altair_chart(grafico.properties(height=220), width="stretch")
+
+with st.expander("Base do rotulo em ordem cronologica"):
+    st.caption(
+        "`sessao` identifica a campanha de coleta; `delta_s` e o intervalo desde a "
+        "leitura anterior dentro da sessao (vazio na primeira linha de cada sessao)."
+    )
+    colunas_tabela = (
+        ["created_at", "sessao", "delta_s", "id", "fault"]
+        + [c for c in numericas if c in ordenado.columns]
+    )
+    st.dataframe(
+        ordenado[colunas_tabela],
+        hide_index=True,
+        height=400,
+        column_config={
+            "created_at": st.column_config.DatetimeColumn(
+                "created_at", format="DD/MM/YY HH:mm:ss.SSS"
+            ),
+            "delta_s": st.column_config.NumberColumn("delta (s)", format="%.2f"),
+        },
+    )
+    st.download_button(
+        "Baixar CSV ordenado",
+        ordenado[colunas_tabela].to_csv(index=False).encode("utf-8"),
+        file_name=f"{escolhido}_cronologico.csv",
+        mime="text/csv",
+    )
+
+# --- 2e. Outliers dentro do rotulo ----------------------------------------
 with st.expander("Outliers dentro deste rotulo (criterio IQR, apenas reportado)"):
     st.caption(
         "Limites recalculados **dentro** do rotulo. Isso separa a variacao natural "

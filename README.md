@@ -121,7 +121,7 @@ Abre em `http://localhost:8501`. Três telas no menu lateral:
 | Tela | O que mostra |
 |---|---|
 | **Visão geral** | Números de cabeçalho e os três achados que contrariam a suposição inicial |
-| **Análise de Falhas** | Valores únicos de `fault` com busca e filtro. Ao selecionar um rótulo: assinatura de vibração com quartis e CV, o que o distingue do resto do dataset, distribuição de cada feature e outliers dentro da classe |
+| **Análise de Falhas** | Valores únicos de `fault` com busca e filtro. Ao selecionar um rótulo: assinatura de vibração com quartis e CV, o que o distingue do resto do dataset, distribuição de cada feature, **série temporal por coluna** e outliers dentro da classe |
 | **Qualidade dos Dados** | Como o dado chegou: nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
 | **Documentos** | Os 6 procedimentos convertidos em Markdown: títulos, campos de cada artigo, matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
 
@@ -181,13 +181,15 @@ reimplementam nada. Nada em produção depende deles.
 ```
 ├── data/
 │   ├── raw/                  # fora do git — dado da empresa
+│   ├── processed/            # fora do git — .md gerados dos PDFs
 │   ├── mp.db                 # fora do git
 │   └── fault_map.yaml        # VERSIONADO — é decisão, não dado
 ├── notebooks/01_eda.ipynb
 ├── src/mp/
 │   ├── config.py             # todo limiar e caminho
 │   ├── analysis/             # loader, profiling, quality, signatures
-│   └── ingestion/            # documents: PDF -> Markdown
+│   ├── ingestion/            # documents: PDF -> Markdown
+│   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
 │   ├── app.py                # streamlit run ui/app.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
@@ -328,6 +330,48 @@ mas por outro motivo: são **estados**, não defeitos. O **G2** encerra antes do
 > substring não o reconhece como estado — sozinho, ele fazia a família `teste`
 > inteira ser classificada como defeito. A família é a unidade de decisão dos
 > guardrails, e é nela que a classificação é aplicada.
+
+## `data/fault_map.yaml` — o catálogo
+
+Único arquivo de `data/` que é **versionado**: é decisão curada, não dado.
+
+Implementa o princípio 1 do projeto. O caminho é sempre
+
+```
+rótulo cru  →  família  →  documento
+```
+
+e cada seta é um *lookup exato*, nunca uma similaridade. Os 151 rótulos crus,
+**incluindo os erros de digitação do operador**, estão listados como `aliases` da
+família correta — `cockecocked_adxl_0` resolve para `cocked_rotor`, `new_tes`
+para `teste`.
+
+É aqui que os guardrails buscam a resposta:
+
+- **G2** lê `is_problem`. Família com `false` é estado, não defeito — o fluxo
+  prescritivo encerra.
+- **G3** lê `documentos`. Lista vazia é recusa, **inclusive quando a cobertura é
+  `parcial`**. Cobertura parcial não autoriza prescrição.
+
+Leitura pelo módulo [src/mp/retrieval/catalog.py](src/mp/retrieval/catalog.py):
+
+```python
+from mp.retrieval import resolver, validar_cobertura
+
+resolver("cocked_rotor_2")
+# {'familia': 'cocked_rotor', 'g2_prossegue': True, 'g3_prossegue': True,
+#  'documentos': [{'id': 'Doc6', ...}], ...}
+
+resolver("ventoinha")
+# g3_prossegue=False — 'Sem documentacao para ventoinha — registre um documento.'
+```
+
+`validar_cobertura(df)` confere que todo rótulo do `banner.csv` tem família.
+Hoje: **151 de 151, sem órfãos e sem entradas mortas no catálogo.**
+
+`_indice_aliases` levanta erro se o mesmo alias aparecer em duas famílias —
+ambiguidade silenciosa no ponto mais crítico do sistema seria pior que uma falha
+ruidosa.
 
 ## Dados e privacidade
 

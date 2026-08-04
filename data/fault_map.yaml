@@ -1,0 +1,390 @@
+# fault_map.yaml — mapa entre a coluna `fault` do banner.csv e os procedimentos
+#
+# ESTE ARQUIVO E VERSIONADO. E decisao, nao dado.
+#
+# Papel no sistema (principio 1 do GUIA.md): numero nunca e comparado com
+# texto. O evento de sensor resolve para um rotulo, o rotulo resolve para uma
+# familia via `aliases`, e a familia resolve para um documento via `documentos`.
+# O guardrail G3 consulta `documentos` com um SELECT — nunca por similaridade
+# semantica, que sempre retornaria algo.
+#
+# `is_problem: false` marca ESTADO, nao defeito. O guardrail G2 encerra o fluxo
+# prescritivo antes do G3: nao ha acao corretiva para uma maquina normal.
+#
+# A primeira versao foi derivada do heuristico de `sugerir_familias` e revisada
+# a mao contra os PDFs. A partir daqui e mantido a mao: os aliases sao a lista
+# exaustiva dos 151 valores distintos observados, incluindo os erros de
+# digitacao do operador, que precisam mapear para a familia correta.
+
+versao: 1
+gerado_em: 2026-08-04
+rotulos_cobertos: 151
+leituras_cobertas: 166796
+
+familias:
+
+  rolamento_inner:
+    descricao: "Defeito na pista interna do rolamento (Inner Race Fault)"
+    is_problem: true
+    n_rotulos: 12
+    n_leituras: 17712
+    documentos:
+      - id: Doc1
+        arquivo: "Doc1.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas em Rolamentos"
+        pdf_origem: "Doc1.pdf"
+        secoes_correcao: ['19', '20', '21', '22']
+    cobertura: documentado
+    aliases:
+      - new_rolamento_inner_0
+      - new_rolamento_inner_1
+      - new_rolamento_inner_2
+      - new_rolamento_inner_3
+      - rolamento_inner
+      - rolamento_inner_2
+      - rolamento_inner_3
+      - rolamento_inner_4
+      - rolamento_inner_adxl_0
+      - rolamento_inner_carga
+      - rolamento_inner_carga_2
+      - rolamento_inner_pos_2
+
+  eccentric_rotor:
+    descricao: "Centro geometrico do rotor nao coincide com o centro de rotacao"
+    is_problem: true
+    n_rotulos: 14
+    n_leituras: 16497
+    documentos: []
+    cobertura: parcial
+    cobertura_parcial_em: Doc5
+    # G3 NAO libera. O Doc5 secao 3.1 descreve excentricidade DE POLIA;
+    # esta familia e excentricidade DE ROTOR. Mesmo fenomeno, componente
+    # diferente. Aceitar a ligacao faria o sistema prescrever ajuste de
+    # polia para um problema de rotor.
+    aliases:
+      - eccentric_2_pos_2
+      - eccentric_adxl_0
+      - eccentric_rotor
+      - eccentric_rotor_2
+      - eccentric_rotor_2_pos_2
+      - eccentric_rotor_3
+      - eccentric_rotor_4
+      - eccentric_rotor_carga
+      - eccentric_rotor_carga_2
+      - eccentric_rotor_pos_2
+      - new_eccentric_0
+      - new_eccentric_1
+      - new_eccentric_2
+      - new_eccentric_3
+
+  normal:
+    descricao: "Operacao normal - condicao de referencia"
+    is_problem: false
+    n_rotulos: 24
+    n_leituras: 15127
+    documentos: []
+    cobertura: sem_documento
+    # G2 encerra antes do G3: e estado, nao defeito.
+    aliases:
+      - new_baseline
+      - new_normal_0
+      - new_normal_1
+      - new_normal_2
+      - new_normal_3
+      - new_normal_4
+      - new_normal_5
+      - new_normal_6
+      - normal
+      - normal_2
+      - normal_2_pos_2
+      - normal_3
+      - normal_3_pos_2
+      - normal_6
+      - normal_adxl_0
+      - normal_adxl_1
+      - normal_carga
+      - normal_carga_3
+      - normal_carga_3_2
+      - normal_carga_3_3
+      - normal_novo
+      - normal_novo_teste
+      - normal_pos_2
+      - normla_carga_3_3
+
+  rolamento_outer:
+    descricao: "Defeito na pista externa do rolamento (Outer Race Fault)"
+    is_problem: true
+    n_rotulos: 14
+    n_leituras: 14813
+    documentos:
+      - id: Doc1
+        arquivo: "Doc1.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas em Rolamentos"
+        pdf_origem: "Doc1.pdf"
+        secoes_correcao: ['19', '20', '21', '22']
+    cobertura: documentado
+    aliases:
+      - new_rolamento_outer_0
+      - new_rolamento_outer_1
+      - new_rolamento_outer_2
+      - new_rolamento_outer_3
+      - rolamento_outer
+      - rolamento_outer_2
+      - rolamento_outer_3
+      - rolamento_outer_4
+      - rolamento_outer_adxl_0
+      - rolamento_outer_adxl_1
+      - rolamento_outer_carga
+      - rolamento_outer_novo
+      - rolamento_outer_novo_teste
+      - rolamento_outer_pos_2
+
+  rolamento_combination:
+    descricao: "Defeito combinado em mais de um componente do rolamento"
+    is_problem: true
+    n_rotulos: 11
+    n_leituras: 14550
+    documentos:
+      - id: Doc1
+        arquivo: "Doc1.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas em Rolamentos"
+        pdf_origem: "Doc1.pdf"
+        secoes_correcao: ['19', '20', '21', '22']
+    cobertura: documentado
+    aliases:
+      - new_rolamento_comb_0
+      - new_rolamento_comb_1
+      - new_rolamento_comb_2
+      - new_rolamento_comb_3
+      - rolamento_comb_adxl_0
+      - rolamento_combination
+      - rolamento_combination_2
+      - rolamento_combination_3
+      - rolamento_combination_4
+      - rolamento_combination_carga
+      - rolamento_combination_pos_2
+
+  cocked_rotor:
+    descricao: "Rotor inclinado em relacao ao eixo de rotacao"
+    is_problem: true
+    n_rotulos: 11
+    n_leituras: 14275
+    documentos:
+      - id: Doc6
+        arquivo: "Doc6.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas de Rotor Inclinado (Cocked Rotor)"
+        pdf_origem: "Doc6.pdf"
+        secoes_correcao: ['16', '17', '18']
+    cobertura: documentado
+    aliases:
+      - cockecocked_adxl_0
+      - cocked_adxl_0
+      - cocked_rotor
+      - cocked_rotor_2
+      - cocked_rotor_2_pos_2
+      - cocked_rotor_carga
+      - cocked_rotor_pos_2
+      - new_cocked_0
+      - new_cocked_1
+      - new_cocked_2
+      - new_cocked_3
+
+  rolamento_ball:
+    descricao: "Defeito nos elementos rolantes - esferas ou rolos (Ball/Roller Fault)"
+    is_problem: true
+    n_rotulos: 12
+    n_leituras: 13704
+    documentos:
+      - id: Doc1
+        arquivo: "Doc1.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas em Rolamentos"
+        pdf_origem: "Doc1.pdf"
+        secoes_correcao: ['19', '20', '21', '22']
+    cobertura: documentado
+    aliases:
+      - new_rolamento_ball_0
+      - new_rolamento_ball_1
+      - new_rolamento_ball_2
+      - new_rolamento_ball_3
+      - rolamento_ball
+      - rolamento_ball_2
+      - rolamento_ball_3
+      - rolamento_ball_4
+      - rolamento_ball_adxl_0
+      - rolamento_ball_carga
+      - rolamento_ball_carga_3
+      - rolamento_ball_pos_2
+
+  desbalanceamento:
+    descricao: "Centro de massa do rotor nao coincide com o eixo de rotacao"
+    is_problem: true
+    n_rotulos: 26
+    n_leituras: 13237
+    documentos:
+      - id: Doc3
+        arquivo: "Doc3.md"
+        titulo: "Procedimento para Correção de Desbalanceamento em Máquinas Rotativas"
+        pdf_origem: "Doc3.pdf"
+        secoes_correcao: ['10', '11', '12']
+    cobertura: documentado
+    aliases:
+      - ddesbalanceado_adxl_0
+      - dedesbalanceado_adxl_1
+      - desabalanceado_3
+      - desbalanceado_1parafuso
+      - desbalanceado_1parafuso_3
+      - desbalanceado_2_pos_2
+      - desbalanceado_3
+      - desbalanceado_adxl_0
+      - desbalanceado_adxl_1
+      - desbalanceado_carga
+      - desbalanceado_carga_2
+      - desbalanceado_carga_3
+      - desbalanceado_carga_3_2
+      - desbalanceado_novo
+      - desbalanceado_pos_2
+      - desbalanceamento
+      - desbanlanceado_carga_3_2
+      - new_desabanceado_1
+      - new_desbalanceado_0
+      - new_desbalanceado_1
+      - new_desbalanceado_2
+      - new_desbalanceado_3
+      - new_desbalanceado_antigo_0
+      - new_desbalanceado_antigo_1
+      - new_desbalanceado_antigo_2
+      - new_desbalanceado_antigo_3
+
+  ventoinha:
+    descricao: "Defeito na ventoinha do motor"
+    is_problem: true
+    n_rotulos: 4
+    n_leituras: 12299
+    documentos: []
+    cobertura: sem_documento
+    # G3 recusa: 'Sem documentacao — registre um documento'.
+    aliases:
+      - ventoinha
+      - ventoinha_2
+      - ventoinha_3
+      - ventoinha_adxl_0
+
+  polia:
+    descricao: "Defeito em polia - excentricidade, ranhuras, chaveta ou folga no cubo"
+    is_problem: true
+    n_rotulos: 2
+    n_leituras: 12000
+    documentos:
+      - id: Doc5
+        arquivo: "Doc5.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas em Polias de Sistemas Rotativos"
+        pdf_origem: "Doc5.pdf"
+        secoes_correcao: ['8', '9', '10', '11', '12', '14', '15']
+    cobertura: documentado
+    aliases:
+      - polia
+      - polia_2
+
+  correia:
+    descricao: "Defeito no sistema de transmissao por correia - tensao, desgaste ou desalinhamento"
+    is_problem: true
+    n_rotulos: 2
+    n_leituras: 11999
+    documentos:
+      - id: Doc4
+        arquivo: "Doc4.md"
+        titulo: "Procedimento para Diagnóstico e Correção de Problemas em Sistemas de Transmissão por Correias"
+        pdf_origem: "Doc4.pdf"
+        secoes_correcao: ['9', '10', '14', '15', '16']
+    cobertura: documentado
+    aliases:
+      - correia
+      - correia_2
+
+  desalinhamento:
+    descricao: "Eixos do motor e da maquina acionada fora de alinhamento"
+    is_problem: true
+    n_rotulos: 8
+    n_leituras: 9178
+    documentos:
+      - id: Doc2
+        arquivo: "Doc2.md"
+        titulo: "Procedimento para Correção de Desalinhamento em Motor Elétrico"
+        pdf_origem: "Doc2.pdf"
+        secoes_correcao: ['9', '9.1', '9.2', '11', '12']
+    cobertura: documentado
+    aliases:
+      - desalinhado
+      - desalinhado_2
+      - desalinhado_3
+      - new_desalinhado_0
+      - new_desalinhado_1
+      - new_desalinhado_2
+      - new_desalinhado_3
+      - new_desalinhado_4
+
+  falta_fase:
+    descricao: "Operacao com falta de fase na alimentacao eletrica"
+    is_problem: true
+    n_rotulos: 4
+    n_leituras: 800
+    documentos: []
+    cobertura: sem_documento
+    # G3 recusa: 'Sem documentacao — registre um documento'.
+    aliases:
+      - new_falta_fase_0
+      - new_falta_fase_1
+      - new_falta_fase_2
+      - new_falta_fase_3
+
+  motor_desligado:
+    descricao: "Motor parado - sem rotacao"
+    is_problem: false
+    n_rotulos: 3
+    n_leituras: 497
+    documentos: []
+    cobertura: sem_documento
+    # G2 encerra antes do G3: e estado, nao defeito.
+    aliases:
+      - mortor_desligado_novo
+      - motor_desligado
+      - motor_desligado_novo
+
+  teste:
+    descricao: "Coleta de teste ou calibracao do sistema de aquisicao"
+    is_problem: false
+    n_rotulos: 3
+    n_leituras: 101
+    documentos: []
+    cobertura: sem_documento
+    # G2 encerra antes do G3: e estado, nao defeito.
+    aliases:
+      - new_tes
+      - new_teste
+      - teste
+
+  acelerando:
+    descricao: "Regime transitorio de partida"
+    is_problem: false
+    n_rotulos: 1
+    n_leituras: 7
+    documentos: []
+    cobertura: sem_documento
+    # G2 encerra antes do G3: e estado, nao defeito.
+    aliases:
+      - acelerando
+
+# ---------------------------------------------------------------------------
+# Rotulos que precisam de atencao humana
+# ---------------------------------------------------------------------------
+# Erros de digitacao do operador, ja mapeados para a familia correta acima.
+# Ficam listados aqui para que a origem do alias nao se perca:
+#   mortor_desligado_novo        -> motor_desligado (M->MOR)
+#   normla_carga_3_3             -> normal (troca de letras)
+#   cockecocked_adxl_0           -> cocked_rotor (radical duplicado)
+#   ddesbalanceado_adxl_0        -> desbalanceamento (D duplicado)
+#   dedesbalanceado_adxl_1       -> desbalanceamento (silaba duplicada)
+#   desabalanceado_3             -> desbalanceamento (metatese)
+#   desbanlanceado_carga_3_2     -> desbalanceamento (N extra)
+#   new_desabanceado_1           -> desbalanceamento (letra faltando)
+#   new_tes                      -> teste (truncado)
