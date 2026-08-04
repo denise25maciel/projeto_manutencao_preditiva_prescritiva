@@ -69,16 +69,22 @@ def perfil_rotulos(df: pd.DataFrame) -> pd.DataFrame:
         ).round(2)
 
     linhas["pct"] = (linhas["n_leituras"] / n * 100).round(3)
-    linhas["e_problema"] = [not _e_estado(str(r)) for r in linhas.index]
+    linhas["e_problema"] = [not e_estado(str(r)) for r in linhas.index]
 
     return linhas.reset_index().sort_values("n_leituras", ascending=False).reset_index(drop=True)
 
 
-def _e_estado(rotulo: str) -> bool:
+def e_estado(rotulo: str) -> bool:
     """True se o rotulo descreve um ESTADO da maquina, nao um defeito.
 
     Base do guardrail G2. Casa por radical porque os dados trazem variacoes
     (`normal_2`, `normal_carga_3_3`, `new_normal_6`) e typos (`normla_carga_3_3`).
+
+    **Limite conhecido:** casar por substring nao pega rotulo TRUNCADO. `new_tes`
+    (2 leituras) e uma abreviacao de `new_teste`, mas nao contem o radical
+    `teste` e por isso e classificado como defeito aqui. Por isso a decisao que
+    vale para os guardrails e tomada no nivel da **familia**, nao do rotulo
+    solto — ver `sugerir_familias`, que agrupa `new_tes` em `teste` pelo prefixo.
     """
     r = rotulo.lower()
     return any(radical in r for radical in config.RADICAIS_NAO_PROBLEMA)
@@ -182,7 +188,7 @@ def sugerir_familias(rotulos) -> pd.DataFrame:
             {
                 "fault": r,
                 "familia_sugerida": familia,
-                "e_problema": not _e_estado(r),
+                "e_problema": not e_estado(r),
                 "tem_prefixo_sessao": base.startswith(config.PREFIXOS_DE_SESSAO),
                 "tem_sufixo_sessao": any(s in base for s in config.SUFIXOS_DE_SESSAO),
             }

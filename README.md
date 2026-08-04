@@ -123,6 +123,11 @@ Abre em `http://localhost:8501`. Três telas no menu lateral:
 | **Visão geral** | Números de cabeçalho e os três achados que contrariam a suposição inicial |
 | **Análise de Falhas** | Valores únicos de `fault` com busca e filtro. Ao selecionar um rótulo: assinatura de vibração com quartis e CV, o que o distingue do resto do dataset, distribuição de cada feature e outliers dentro da classe |
 | **Qualidade dos Dados** | Como o dado chegou: nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
+| **Documentos** | Os 6 procedimentos convertidos em Markdown: títulos, campos de cada artigo, matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
+
+Na primeira visita à tela **Documentos**, clique em **Converter PDFs** para gerar os
+`.md` a partir de `data/raw/*.pdf`. Eles são escritos em
+`data/processed/documentos_md/`, fora do git.
 
 O primeiro carregamento lê o CSV (~0,4 s para 166 mil linhas) e guarda em
 `@st.cache_data`; os cliques seguintes não releem o arquivo.
@@ -181,7 +186,8 @@ reimplementam nada. Nada em produção depende deles.
 ├── notebooks/01_eda.ipynb
 ├── src/mp/
 │   ├── config.py             # todo limiar e caminho
-│   └── analysis/             # loader, profiling, quality, signatures
+│   ├── analysis/             # loader, profiling, quality, signatures
+│   └── ingestion/            # documents: PDF -> Markdown
 ├── ui/
 │   ├── app.py                # streamlit run ui/app.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
@@ -260,6 +266,68 @@ A tabela distingue dois casos:
   critério (`z_peak_vel_comp_freq_hz`: o IQR é 2,5 Hz porque a massa está grudada em 61 Hz)
 - `% outliers` baixo com `max/limite` nas dezenas — cauda longa de impacto
   (`z_peak_acceleration_g` chega a **49×** o limite superior). **Este é o sinal.**
+
+## Documentos de procedimento
+
+Os 6 PDFs de `data/raw/` são convertidos em Markdown com seções numeradas — o
+formato que a Parte 4 vai fatiar em chunks. Cada seção é classificada num dos 15
+**campos canônicos** (`config.CAMPOS_CANONICOS`), que na Parte 4 viram o metadado
+do chunk.
+
+| Arquivo | Título | Seções | Campos |
+|---|---|---|---|
+| Doc1 | Diagnóstico e Correção de Problemas em **Rolamentos** | 30 | 15/15 |
+| Doc2 | Correção de **Desalinhamento** em Motor Elétrico | 24 | 13/15 |
+| Doc3 | Correção de **Desbalanceamento** em Máquinas Rotativas | 30 | 13/15 |
+| Doc4 | Problemas em Sistemas de Transmissão por **Correias** | 27 | 15/15 |
+| Doc5 | Problemas em **Polias** de Sistemas Rotativos | 24 | 14/15 |
+| Doc6 | Problemas de Rotor Inclinado (**Cocked Rotor**) | 33 | 15/15 |
+
+### Doc1 veio digitalizado
+
+O PDF de rolamentos são 17 páginas de imagem, sem camada de texto — `pypdf`
+extrai 52 caracteres dele, todos de cabeçalho. Rodar OCR exigiria o binário do
+Tesseract, que `pip` não resolve e que quebraria o "clone limpo".
+
+O conversor aceita uma **transcrição sidecar** em `data/raw/<nome>.txt` e a usa
+quando o PDF não tem texto. A origem fica registrada no front matter de cada `.md`
+(`origem_texto: pdf | sidecar`), para ninguém confundir transcrição com extração
+automática.
+
+### Campos pendentes
+
+| Documento | Campo ausente |
+|---|---|
+| Doc2 | Introdução, Indicadores de monitoramento |
+| Doc3 | Descrição do problema, Indicadores de monitoramento |
+| Doc5 | Descrição do problema |
+
+A ausência de **Indicadores de monitoramento** no Doc2 e no Doc3 é a que importa:
+Doc1, Doc4, Doc5 e Doc6 listam quais grandezas acompanhar, e o Doc1 nomeia
+`Kurtosis`, `Crest Factor` e `RMS global` — colunas que existem no `banner.csv`.
+Sem essa seção, desalinhamento e desbalanceamento não têm ponte explícita entre
+procedimento e sensor.
+
+### Cobertura das famílias de `fault`
+
+Dos 16 grupos de `fault`, **9 têm procedimento dedicado**. As famílias de defeito
+sem documento — `ventoinha` e `falta_fase`, juntas **13.099 leituras** — são o
+caminho de recusa do guardrail **G3**: o fluxo encerra com a mensagem
+padronizada, sem chamar o LLM.
+
+`eccentric_rotor` fica como **cobertura parcial**: a seção 3.1 do Doc5 descreve
+excentricidade, mas *de polia*, e o rótulo do banner é excentricidade *de rotor*.
+Mesmo fenômeno, componente diferente — o G3 **não** libera, porque aceitar a
+ligação faria o sistema prescrever ajuste de polia para um problema de rotor.
+
+`normal`, `teste`, `acelerando` e `motor_desligado` também aparecem sem documento,
+mas por outro motivo: são **estados**, não defeitos. O **G2** encerra antes do G3.
+
+> **Defeito/estado é decidido pela família, não pelo rótulo solto.** O rótulo
+> `new_tes` (2 leituras) é uma truncagem de `new_teste`, e a checagem por
+> substring não o reconhece como estado — sozinho, ele fazia a família `teste`
+> inteira ser classificada como defeito. A família é a unidade de decisão dos
+> guardrails, e é nela que a classificação é aplicada.
 
 ## Dados e privacidade
 

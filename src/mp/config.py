@@ -22,6 +22,10 @@ RAW_DIR = DATA_DIR / "raw"
 DB_PATH = DATA_DIR / "mp.db"  # Parte 2
 FAULT_MAP_PATH = DATA_DIR / "fault_map.yaml"  # Parte 1
 
+# Markdown gerado a partir dos PDFs de procedimento. Fica fora do git: e
+# conteudo da empresa, so em outro formato.
+DOCS_MD_DIR = DATA_DIR / "processed" / "documentos_md"
+
 # O CSV bruto trocou de lugar durante o desenvolvimento. Em vez de fixar um
 # caminho e quebrar, procuramos nos lugares plausiveis, em ordem de preferencia.
 # A variavel de ambiente MP_CSV tem prioridade sobre todos.
@@ -163,6 +167,66 @@ COLUNAS_ASSINATURA = [
     "temperature_c",
     "rpm",
 ]
+
+# --------------------------------------------------------------------------
+# Documentos de procedimento
+# --------------------------------------------------------------------------
+
+# Campos que um procedimento de manutencao deveria ter. A ordem e a do fluxo
+# de trabalho real: entender -> diagnosticar -> corrigir -> validar -> registrar.
+#
+# Cada campo casa por regex contra o TITULO da secao numerada. Ausencia de um
+# campo nao invalida o documento — vira "pendente" no relatorio, que e o
+# insumo para decidir se vale pedir revisao do procedimento a engenharia.
+#
+# Os padroes rodam sobre o titulo com acentos removidos e em minusculas.
+CAMPOS_CANONICOS = [
+    ("objetivo", "Objetivo", r"objetivo"),
+    ("introducao", "Introducao", r"introducao|conceitos fundamentais"),
+    ("descricao_problema", "Descricao do problema",
+     r"descricao do problema|caracterizacao da falha|componentes d"),
+    ("causas", "Causas",
+     r"causas|modos de falha|tipos de falha|tipos de desalinhamento|"
+     r"principais tipos"),
+    ("sintomas", "Sintomas", r"sintomas"),
+    ("ferramentas", "Ferramentas", r"ferramentas|instrumentos"),
+    ("seguranca", "Seguranca", r"seguranca"),
+    ("inspecao_visual", "Inspecao visual", r"inspecao visual"),
+    ("diagnostico_vibracao", "Diagnostico por vibracao",
+     r"diagnostico por vibracao|diagnostico inicial|analise espectral|"
+     r"medicao de vibracao|caracteristicas vibracionais|frequencias caracteristicas|"
+     r"diagnostico por envelope|diagnostico de defeito"),
+    ("correcao", "Correcao",
+     r"correcao|balanceamento|substituicao|instalacao do novo|preparacao para"),
+    ("validacao", "Validacao",
+     r"validacao|verificacao final|verificacao dinamica|monitoramento pos"),
+    ("criterios_aceitacao", "Criterios de aceitacao", r"criterios de aceitacao"),
+    ("registro", "Registro", r"registro d"),
+    ("preventivas", "Recomendacoes preventivas",
+     r"preventiv|boas praticas|cuidados durante"),
+    ("indicadores", "Indicadores de monitoramento", r"indicadores"),
+]
+
+# Familias de `fault` do banner.csv que cada documento cobre. CURADO A MAO —
+# e o embriao do data/fault_map.yaml (Parte 1) e o que o guardrail G3 vai
+# consultar. Nao inferir por similaridade semantica: G3 e um SELECT.
+MAPA_DOC_FAMILIA = {
+    "Doc1": ["rolamento_inner", "rolamento_outer", "rolamento_ball",
+             "rolamento_combination"],
+    "Doc2": ["desalinhamento"],
+    "Doc3": ["desbalanceamento"],
+    "Doc4": ["correia"],
+    "Doc5": ["polia"],
+    "Doc6": ["cocked_rotor"],
+}
+
+# Cobertura parcial: o documento fala do fenomeno, mas em outro componente.
+# Nao entra no G3 como documento valido — vira pergunta para a engenharia.
+# Doc5 secao 3.1 descreve excentricidade DE POLIA; `eccentric_rotor` no banner
+# e excentricidade DE ROTOR. Mesmo nome, componente diferente.
+COBERTURA_PARCIAL = {
+    "Doc5": ["eccentric_rotor"],
+}
 
 # Razao entre eixos. Qual e axial e qual e radial depende da montagem do sensor,
 # que o dataset nao informa — por isso o nome e neutro (x/z) e a leitura fica

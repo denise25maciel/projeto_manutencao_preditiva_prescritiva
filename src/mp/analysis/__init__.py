@@ -9,6 +9,7 @@ analise e modulo e nao so notebook.
 
 from mp.analysis.loader import carregar, colunas_numericas
 from mp.analysis.profiling import (
+    e_estado,
     janela_temporal,
     nulos_por_coluna,
     perfil_rotulos,
@@ -39,6 +40,7 @@ __all__ = [
     "janela_temporal",
     "taxa_amostragem",
     "sugerir_familias",
+    "e_estado",
     "colunas_constantes",
     "colunas_redundantes",
     "duplicatas_consecutivas",

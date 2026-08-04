@@ -24,10 +24,18 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from mp import config  # noqa: E402
+from mp.ingestion import (  # noqa: E402
+    campos_pendentes,
+    carregar_markdowns,
+    cobertura_por_familia,
+    converter_todos,
+    matriz_campos,
+)
 from mp.analysis import (  # noqa: E402
     assinatura_de_rotulo,
     assinaturas_por_rotulo,
     carregar,
+    e_estado,
     colunas_a_descartar,
     colunas_constantes,
     colunas_numericas,
@@ -152,6 +160,82 @@ def r_serie(rotulo: str, coluna: str):
 @st.cache_data(**CACHE)
 def r_numericas():
     return colunas_numericas(dados())
+
+
+# --- documentos -------------------------------------------------------------
+#
+# A conversao PDF -> Markdown escreve em disco, entao NAO fica em cache: e
+# acionada por botao. So a leitura dos `.md` e cacheada, com o numero de
+# arquivos e o mtime mais recente como chave — assim uma reconversao invalida
+# o cache sozinha.
+
+
+def _versao_md() -> tuple[int, float]:
+    if not config.DOCS_MD_DIR.exists():
+        return (0, 0.0)
+    arqs = list(config.DOCS_MD_DIR.glob("*.md"))
+    return (len(arqs), max((a.stat().st_mtime for a in arqs), default=0.0))
+
+
+def converter_pdfs():
+    """Roda a conversao. Efeito colateral em disco — sem cache, de proposito."""
+    return converter_todos()
+
+
+@st.cache_data(**CACHE)
+def _r_docs(versao):
+    return carregar_markdowns()
+
+
+def r_docs():
+    return _r_docs(_versao_md())
+
+
+@st.cache_data(**CACHE)
+def _r_matriz(versao):
+    return matriz_campos(carregar_markdowns())
+
+
+def r_matriz_campos():
+    return _r_matriz(_versao_md())
+
+
+@st.cache_data(**CACHE)
+def _r_pendentes(versao):
+    return campos_pendentes(carregar_markdowns())
+
+
+def r_pendentes():
+    return _r_pendentes(_versao_md())
+
+
+@st.cache_data(**CACHE)
+def r_familias_banner():
+    """Familia sugerida x volume no banner.csv — o lado direito do diagrama."""
+    df = dados()
+    fam = sugerir_familias(df[config.COLUNA_ROTULO].dropna().unique())
+    contagem = df[config.COLUNA_ROTULO].value_counts().rename("n_leituras")
+    fam = fam.join(contagem, on="fault")
+    agrupado = (
+        fam.groupby("familia_sugerida", as_index=False)
+        .agg(n_rotulos=("fault", "count"), n_leituras=("n_leituras", "sum"))
+        .rename(columns={"familia_sugerida": "familia"})
+    )
+    # `e_problema` vem do NOME DA FAMILIA, nao do maximo sobre os rotulos.
+    # Com o maximo, a familia `teste` era marcada como defeito por causa de
+    # `new_tes` — rotulo truncado que nao contem o radical `teste` e escapa da
+    # checagem por substring. A familia e a unidade de decisao dos guardrails.
+    agrupado["e_problema"] = ~agrupado["familia"].map(e_estado)
+    return agrupado.sort_values("n_leituras", ascending=False).reset_index(drop=True)
+
+
+@st.cache_data(**CACHE)
+def _r_cobertura(versao, familias):
+    return cobertura_por_familia(carregar_markdowns(), familias)
+
+
+def r_cobertura():
+    return _r_cobertura(_versao_md(), tuple(r_familias_banner()["familia"]))
 
 
 # --- utilitarios de pagina --------------------------------------------------
