@@ -51,6 +51,7 @@ from mp.analysis import (  # noqa: E402
     serie_temporal,
     sugerir_familias,
     taxa_amostragem,
+    timestamps_duplicados,
 )
 
 # TTL infinito: o CSV bruto nao muda durante a sessao.
@@ -128,6 +129,11 @@ def r_outliers_global():
 def r_outliers_do_rotulo(rotulo: str):
     df = dados()
     return outliers_iqr(df[df[config.COLUNA_ROTULO] == rotulo])
+
+
+@st.cache_data(**CACHE)
+def r_tempos_duplicados():
+    return timestamps_duplicados(dados())
 
 
 @st.cache_data(**CACHE)

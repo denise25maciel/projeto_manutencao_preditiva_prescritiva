@@ -1,6 +1,7 @@
-"""Como os dados chegaram: nulos, cadencia, redundancias, duplicatas e outliers.
+"""Como os dados chegaram: campos vazios, ritmo da coleta, colunas repetidas,
+leituras duplicadas e valores fora do normal.
 
-Nada e corrigido nesta tela. Parte 0 descreve; Parte 1 trata.
+Nada e corrigido nesta tela. Esta etapa descreve; a proxima trata.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import _dados as D
 D.configurar_pagina("Qualidade dos Dados", "🧪")
 
 st.title("🧪 Qualidade dos Dados")
-st.caption("Diagnostico do dado bruto. Nenhum valor e alterado aqui.")
+st.caption("O que veio certo e o que veio torto no arquivo. Nada e alterado aqui.")
 
 try:
     resumo = D.r_resumo()
@@ -28,14 +29,15 @@ amostragem = D.r_amostragem()
 constantes = D.r_constantes()
 redundantes = D.r_redundantes()
 duplicatas = D.r_duplicatas()
+tempos_dup = D.r_tempos_duplicados()
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Leituras", f"{resumo['linhas']:,}".replace(",", "."))
-c2.metric("Celulas nulas", f"{resumo['celulas_nulas']:,}".replace(",", "."))
+c2.metric("Campos vazios", f"{resumo['celulas_nulas']:,}".replace(",", "."))
 c3.metric(
-    "Duplicatas consecutivas",
+    "Leituras repetidas",
     f"{duplicatas['total']:,}".replace(",", "."),
-    f"{duplicatas['pct']}% das linhas",
+    f"{duplicatas['pct']}% do total",
     delta_color="inverse",
 )
 c4.metric("Colunas descartaveis", len(D.r_descartar()))
@@ -43,93 +45,118 @@ c4.metric("Colunas descartaveis", len(D.r_descartar()))
 st.divider()
 
 # ==========================================================================
-# 1. Nulos
+# 1. Campos vazios
 # ==========================================================================
-st.header("1. Valores nulos por coluna")
+st.header("1. Campos vazios")
 
 total_nulos = int(nulos["nulos"].sum())
 if total_nulos == 0:
     st.success(
-        f"**Nenhum nulo declarado** em nenhuma das {resumo['colunas']} colunas, nas "
-        f"{resumo['linhas']:,} linhas. O dataset chegou completo.".replace(",", ".")
+        f"**Nao ha nenhum campo vazio.** Todas as {resumo['colunas']} colunas estao "
+        f"preenchidas nas {resumo['linhas']:,} linhas.".replace(",", ".")
     )
     st.warning(
-        "Ausencia de `NaN` nao e ausencia de dado faltante. Um sensor sem leitura "
-        "pode ter sido gravado como `0.0` — nulo disfarcado de medida. Os candidatos "
-        "estao nas secoes de constantes e de outliers, nao aqui."
+        """
+**Isso nao quer dizer que nao falta dado.**
+
+Um sensor que nao conseguiu ler pode ter gravado `0.0` em vez de deixar o campo em
+branco. Do ponto de vista do arquivo, o campo esta preenchido; na pratica, e um
+dado que nao existe.
+
+Esses casos aparecem nas secoes seguintes, olhando para valores estranhos e colunas
+com poucos valores diferentes.
+"""
     )
 else:
     st.altair_chart(
         alt.Chart(nulos[nulos["nulos"] > 0])
         .mark_bar(color="#d1495b")
         .encode(
-            x=alt.X("pct_nulos:Q", title="% nulos"),
+            x=alt.X("pct_nulos:Q", title="% vazio"),
             y=alt.Y("coluna:N", sort="-x", title=None),
             tooltip=["coluna", "nulos", "pct_nulos"],
         ),
         width="stretch",
     )
 
-# `pct_nulos` e `preenchidos` sao redundantes na tela: com zero nulos, o
-# percentual e sempre 0,000% e `preenchidos` repete o total de linhas em todas
-# as 26 colunas. Continuam no retorno de `nulos_por_coluna` porque o grafico
-# acima usa o percentual quando existe nulo.
+st.caption(
+    "A coluna **valores diferentes** ajuda a achar problema: uma coluna com pouquissimos "
+    "valores distintos em 166 mil linhas provavelmente nao e uma medida continua."
+)
 st.dataframe(
     nulos[["coluna", "tipo", "nulos", "distintos"]],
     hide_index=True,
     height=330,
     column_config={
-        "nulos": st.column_config.NumberColumn("nulos", format="%d"),
-        "distintos": st.column_config.NumberColumn(
-            "valores distintos",
-            format="%d",
-            help="Poucos valores distintos em 166 mil linhas = candidata a "
-            "categorica disfarcada de numerica.",
-        ),
+        "nulos": st.column_config.NumberColumn("vazios", format="%d"),
+        "distintos": st.column_config.NumberColumn("valores diferentes", format="%d"),
     },
 )
 
 st.divider()
 
 # ==========================================================================
-# 2. Como o dado foi coletado
+# 2. Ritmo da coleta
 # ==========================================================================
-st.header("2. Cadencia e continuidade da coleta")
+st.header("2. Ritmo e continuidade da coleta")
+
+st.markdown(
+    """
+Aqui olhamos o **tempo entre uma leitura e a seguinte**, depois de colocar tudo em
+ordem de data.
+"""
+)
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Intervalo mediano", f"{amostragem['intervalo_mediano_s']} s", help="O esperado era ~2 s")
-c2.metric(
-    "Na cadencia nominal",
-    f"{amostragem['pct_na_cadencia']}%",
-    help="Fracao das leituras com intervalo de 2 s +- 0,25 s",
+c1.metric(
+    "Ritmo tipico", f"{amostragem['intervalo_mediano_s']:.0f} s",
+    help="Tempo mais comum entre duas leituras seguidas."
 )
-c3.metric("Cortes (> 60 s)", amostragem["cortes"])
-c4.metric("Maior gap", f"{amostragem['maior_gap_horas']:.1f} h")
+c2.metric(
+    "Leituras nesse ritmo", f"{amostragem['pct_na_cadencia']:.0f}%",
+    help="Quantas leituras respeitam esse intervalo, com folga de 0,25 s."
+)
+c3.metric(
+    "Pausas longas", amostragem["cortes"],
+    help="Quantas vezes passou mais de 1 minuto sem leitura."
+)
+c4.metric(
+    "Maior pausa", f"{amostragem['maior_gap_horas']:.0f} h",
+    help="A maior interrupcao entre duas leituras."
+)
 
 st.markdown(
     f"""
-Coleta de **{janela['inicio']:%d/%m/%Y %H:%M}** a **{janela['fim']:%d/%m/%Y %H:%M}** UTC
-({janela['duracao_dias']} dias). {janela['timestamps_repetidos']} timestamps aparecem
-repetidos.
-"""
+**O que esses numeros dizem:**
+
+- O sensor grava uma leitura a cada **{amostragem['intervalo_mediano_s']:.0f} segundos**,
+  e {amostragem['pct_na_cadencia']:.0f}% das leituras seguem esse ritmo.
+- Houve **{amostragem['cortes']} pausas** de mais de 1 minuto. Cada pausa separa uma
+  gravacao da seguinte.
+- A maior pausa foi de **{amostragem['maior_gap_horas']:.0f} horas** — quase
+  {amostragem['maior_gap_horas'] / 24:.0f} dias sem nenhuma leitura.
+
+**Conclusao:** as {resumo['linhas']:,} linhas nao sao uma medicao continua de
+{janela['duracao_dias']:.0f} dias. Sao **{amostragem['sessoes_estimadas']} gravacoes
+curtas** espalhadas nesse periodo.
+""".replace(",", ".")
 )
 
 if not janela["monotonico"]:
     st.error(
-        "**`created_at` nao e monotonico.** O arquivo nao esta em ordem cronologica: "
-        "ha saltos negativos de dezenas de dias entre linhas vizinhas. Sao "
-        f"{amostragem['sessoes_estimadas']} sessoes gravadas em epocas diferentes e "
-        "concatenadas fora de ordem.\n\n"
-        "**Consequencia:** toda operacao que depende de vizinhanca temporal — a "
-        "mediana movel da Parte 3, a formacao de episodios da Parte 1 — precisa "
-        "ordenar por `created_at` antes, e nunca atravessar a fronteira entre sessoes."
+        """
+**O arquivo nao esta em ordem de data.**
+
+Uma linha pode ser de 3 de junho e a linha logo abaixo, de 15 de maio. As gravacoes
+foram juntadas fora de ordem.
+
+*O que fazemos com isso:* qualquer calculo que dependa da leitura anterior — media
+movel, formacao de eventos, tempo entre leituras — precisa ordenar por data primeiro.
+Todos os calculos desta interface ja fazem isso.
+"""
     )
 
-st.subheader("Distribuicao do intervalo entre leituras")
-st.caption(
-    "Calculado apos ordenar por tempo. O eixo para em 10 s para continuar legivel — "
-    "os gaps entre sessoes chegam a 122 h e estao contados no cartao 'Cortes'."
-)
+st.subheader("Distribuicao do tempo entre leituras")
 
 h, bordas = np.histogram(amostragem["intervalos"], bins=60, range=(0, 10))
 hist_int = pd.DataFrame({"intervalo_s": (bordas[:-1] + bordas[1:]) / 2, "leituras": h})
@@ -138,107 +165,247 @@ st.altair_chart(
     alt.Chart(hist_int)
     .mark_bar(color="#4c78a8")
     .encode(
-        x=alt.X("intervalo_s:Q", title="intervalo entre leituras (s)"),
-        y=alt.Y("leituras:Q", title="leituras", scale=alt.Scale(type="symlog")),
+        x=alt.X("intervalo_s:Q", title="segundos entre uma leitura e a seguinte"),
+        y=alt.Y("leituras:Q", title="quantas vezes", scale=alt.Scale(type="symlog")),
         tooltip=[alt.Tooltip("intervalo_s:Q", format=".2f"), "leituras"],
     )
     .properties(height=280),
     width="stretch",
 )
 st.caption(
-    "Eixo Y em escala simlog. A massa esta em 2 s, com um segundo modo perto de "
-    "5,3 s — provavelmente outra configuracao de datalogger em parte das sessoes."
+    "O grafico vai so ate 10 segundos, senao as pausas de horas achatariam tudo. "
+    "A altura usa escala comprimida para os valores raros continuarem visiveis. "
+    "Ha dois picos: a maioria em 2 s, e um segundo grupo perto de 5,3 s — "
+    "provavelmente outra configuracao do equipamento em parte das gravacoes."
 )
+
+# --------------------------------------------------------------------------
+# 2.1 Leituras com a mesma data e hora
+# --------------------------------------------------------------------------
+st.subheader("Leituras gravadas com a mesma data e hora")
+
+if tempos_dup["total"] == 0:
+    st.success("Cada leitura tem um instante proprio. Nenhuma data e hora se repete.")
+else:
+    resumo_dup = tempos_dup["resumo"]
+    linha = resumo_dup.iloc[0]
+
+    st.markdown(
+        f"""
+**{tempos_dup['total']:,} leituras compartilham a mesma data e hora.**
+
+Nao sao varios instantes repetidos: e **um unico instante** com
+{tempos_dup['total']:,} leituras dentro.
+""".replace(",", ".")
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Leituras afetadas", f"{tempos_dup['total']:,}".replace(",", "."))
+    m2.metric("Instantes repetidos", tempos_dup["instantes"])
+    m3.metric("Sao copias identicas?", "Nao" if not linha["medidas_identicas"] else "Sim")
+    m4.metric("Ids em sequencia?", "Sim" if linha["ids_contiguos"] else "Nao")
+
+    st.dataframe(
+        resumo_dup[
+            ["created_at", "linhas", "rotulos", "id_min", "id_max",
+             "medidas_identicas", "linhas_repetidas", "ids_contiguos"]
+        ],
+        hide_index=True,
+        column_config={
+            "created_at": st.column_config.DatetimeColumn(
+                "data e hora", format="DD/MM/YYYY HH:mm:ss.SSSSSS"
+            ),
+            "linhas": st.column_config.NumberColumn("leituras", format="%d"),
+            "rotulos": "tipo de falha",
+            "id_min": st.column_config.NumberColumn("primeiro id", format="%d"),
+            "id_max": st.column_config.NumberColumn("ultimo id", format="%d"),
+            "medidas_identicas": st.column_config.CheckboxColumn(
+                "medidas iguais?", help="Se sim, sao copias do mesmo registro."
+            ),
+            "linhas_repetidas": st.column_config.NumberColumn(
+                "linhas repetidas", format="%d",
+                help="Quantas leituras do bloco sao copia exata de outra do bloco."
+            ),
+            "ids_contiguos": st.column_config.CheckboxColumn(
+                "ids em sequencia?",
+                help="Se sim, o bloco entrou no arquivo de uma vez so."
+            ),
+        },
+    )
+
+    st.error(
+        f"""
+**O que aconteceu aqui, em palavras simples**
+
+{tempos_dup['total']:,} leituras do tipo **{linha['rotulos']}** receberam todas a
+mesma data e hora: **{linha['created_at']:%d/%m/%Y as %H:%M:%S}**.
+
+Elas **nao sao copias**: os valores medidos variam normalmente entre elas
+(so {linha['linhas_repetidas']} sao iguais a outra). Ou seja, as **medidas sao
+reais**; o que esta errado e o **horario**.
+
+Tres sinais de que foi uma carga em lote, e nao uma coleta:
+
+1. Os ids vao de {linha['id_min']:,} a {linha['id_max']:,} **sem pular nenhum** — o
+   bloco entrou no arquivo de uma vez.
+2. Logo antes e logo depois desse bloco, o arquivo tem leituras de outro tipo de
+   falha (`rolamento_ball_2`) separadas por 2 segundos normais.
+3. Esse bloco e **um terco de todas as leituras** desse tipo de falha.
+
+*O que fazemos com isso:* as medidas continuam validas para comparar vibracao. Mas
+essas leituras **nao podem sustentar nada que dependa de tempo** — duracao do
+evento, frequencia com que acontece, ordem dos acontecimentos. Precisam ficar
+marcadas na proxima etapa.
+""".replace(",", ".")
+    )
+
+    st.caption(
+        "As leituras do bloco, em ordem de id. Repare que as medidas mudam de linha "
+        "para linha, mas a data e hora nao."
+    )
+
+    colunas_ver = [
+        "id", "created_at", "fault", "rpm", "z_rms_velocity_mm_s",
+        "x_rms_velocity_mm_s", "z_kurtosis", "z_crest_factor", "temperature_c",
+    ]
+    colunas_ver = [c for c in colunas_ver if c in tempos_dup["linhas"].columns]
+
+    st.dataframe(
+        tempos_dup["linhas"][colunas_ver],
+        hide_index=True,
+        height=400,
+        column_config={
+            "created_at": st.column_config.DatetimeColumn(
+                "data e hora", format="DD/MM/YYYY HH:mm:ss.SSSSSS"
+            ),
+            "fault": "tipo de falha",
+        },
+    )
+
+    st.download_button(
+        "Baixar as leituras afetadas (CSV)",
+        tempos_dup["linhas"].to_csv(index=False).encode("utf-8"),
+        file_name="leituras_com_data_repetida.csv",
+        mime="text/csv",
+    )
 
 st.divider()
 
 # ==========================================================================
-# 3. Colunas constantes e redundantes
+# 3. Colunas sem informacao propria
 # ==========================================================================
-st.header("3. Colunas sem informacao propria")
+st.header("3. Colunas que nao acrescentam informacao")
 
-st.subheader("3.1 Constantes e quase-constantes")
-st.caption(
-    "Variancia nula nao distingue nada e quebra o `StandardScaler` (divisao por "
-    "desvio padrao zero)."
+st.subheader("3.1 Colunas com sempre o mesmo valor")
+st.markdown(
+    """
+Uma coluna que tem sempre o mesmo valor nao distingue nada — e como uma pergunta
+em que todo mundo responde igual. Alem de inutil, ela quebra o calculo de
+padronizacao usado mais adiante.
+"""
 )
 
 n_const = int(constantes["constante"].sum())
 if n_const == 0:
-    st.success("**Nenhuma coluna constante.** Todas tem mais de um valor distinto.")
+    st.success("**Nenhuma coluna tem sempre o mesmo valor.** Todas variam.")
     st.info(
-        "Isso **contraria a suspeita registrada no GUIA.md** de que "
-        "`z_peak_vel_comp_freq_hz` e `x_peak_vel_comp_freq_hz` seriam fixas em 61 Hz. "
-        "Elas tem 79 e 50 valores distintos; 61 Hz e a moda (60% e 49% das linhas), "
-        "nao o valor unico. As colunas carregam informacao e **nao devem ser "
-        "descartadas** — a frequencia do pico se desloca justamente em alguns defeitos."
+        """
+**Isto desmente uma suspeita que tinhamos.**
+
+Achavamos que `z_peak_vel_comp_freq_hz` e `x_peak_vel_comp_freq_hz` fossem sempre
+61 Hz. Nao sao: tem 79 e 50 valores diferentes. 61 Hz e so o valor mais comum
+(aparece em 60% e 49% das linhas).
+
+Ou seja, **essas colunas ficam**. A frequencia muda justamente em alguns defeitos,
+que e a informacao que queremos.
+"""
     )
 else:
-    st.warning(f"{n_const} coluna(s) constante(s).")
+    st.warning(f"{n_const} coluna(s) com sempre o mesmo valor.")
 
 st.dataframe(
     constantes.head(10),
     hide_index=True,
     column_config={
-        "distintos": st.column_config.NumberColumn("valores distintos", format="%d"),
-        "pct_dominante": st.column_config.NumberColumn("% do valor dominante", format="%.2f%%"),
+        "distintos": st.column_config.NumberColumn("valores diferentes", format="%d"),
+        "valor_dominante": "valor mais comum",
+        "pct_dominante": st.column_config.NumberColumn("% desse valor", format="%.2f%%"),
+        "constante": st.column_config.CheckboxColumn("sempre igual?"),
     },
 )
 st.caption(
-    "`rpm` tem 5 valores (0, 500, 1000, 2000, 3000): e uma categorica de regime "
-    "disfarcada de numerica, nao uma medida continua. Importa para o kNN da Parte 3."
+    "Repare no `rpm`: so 5 valores em 166 mil linhas (0, 500, 1000, 2000 e 3000). "
+    "Nao e uma medida continua, sao 5 regimes de rotacao. Isso muda como ele deve "
+    "ser usado na proxima etapa."
 )
 
-st.subheader("3.2 Unidades duplicadas")
-st.caption(
-    "Testamos a identidade numerica, nao a correlacao: mm/s = in/s x 25,4 e "
-    "F = C x 9/5 + 32. Se bater dentro do arredondamento do arquivo, uma coluna e "
-    "conversao da outra — nao duas medidas independentes."
+st.subheader("3.2 Colunas que sao a mesma medida em outra unidade")
+st.markdown(
+    """
+Algumas colunas repetem a mesma medida convertida: polegadas e milimetros,
+Fahrenheit e Celsius.
+
+Para confirmar, nao olhamos se elas "andam juntas" — fizemos a conta.
+Multiplicamos a coluna em polegada por 25,4 e comparamos com a coluna em milimetro.
+Se der igual, uma e copia da outra.
+"""
 )
 
 st.dataframe(
     redundantes,
     hide_index=True,
     column_config={
-        "coluna_descartavel": "descartar",
-        "coluna_mantida": "manter",
-        "erro_max": st.column_config.NumberColumn("erro max", format="%.6f"),
-        "erro_medio": st.column_config.NumberColumn("erro medio", format="%.6f"),
-        "redundante": st.column_config.CheckboxColumn("redundante?"),
+        "coluna_descartavel": "pode sair",
+        "coluna_mantida": "fica",
+        "relacao": "conta usada",
+        "erro_max": st.column_config.NumberColumn("maior diferenca", format="%.6f"),
+        "erro_medio": st.column_config.NumberColumn("diferenca media", format="%.6f"),
+        "redundante": st.column_config.CheckboxColumn("e copia?"),
     },
 )
 st.success(
-    f"**{int(redundantes['redundante'].sum())} de {len(redundantes)} pares confirmados.** "
-    "O erro maximo fica na casa do arredondamento do arquivo. Mantemos o SI (mm/s, C) "
-    "e descartamos a versao imperial: duplicar a mesma grandeza faz o `StandardScaler` "
-    "conta-la duas vezes e infla o peso dela na distancia do kNN."
+    f"""
+**{int(redundantes['redundante'].sum())} de {len(redundantes)} pares confirmados como copia.**
+
+A maior diferenca encontrada foi de 0,016 — o tamanho do arredondamento do proprio
+arquivo. Nao ha medida independente ali.
+
+Ficamos com milimetro e Celsius. Manter as duas versoes faria o sistema contar a
+mesma grandeza duas vezes e dar peso dobrado a ela.
+"""
 )
 
 st.divider()
 
 # ==========================================================================
-# 4. Duplicatas consecutivas
+# 4. Leituras repetidas
 # ==========================================================================
-st.header("4. Leituras repetidas")
+st.header("4. Leituras identicas a anterior")
 
 st.markdown(
     f"""
 **{duplicatas['total']:,} linhas ({duplicatas['pct']}%)** sao identicas a linha
-anterior em todas as colunas de medida. A comparacao ignora `id` e `created_at`
-de proposito — eles sempre mudam, e inclui-los nunca acusaria duplicata nenhuma.
+imediatamente anterior em **todas** as medidas.
 
-Duas leituras iguais em 4 casas decimais a 2 s de distancia sao, quase certamente,
-a mesma amostra repetida pelo datalogger. Elas inflam a contagem de ocorrencias e,
-na Parte 3, viram vizinhos de distancia zero que nao acrescentam informacao.
+A comparacao ignora `id` e `created_at` de proposito: esses dois sempre mudam, e
+inclui-los faria nenhuma duplicata aparecer.
+
+Duas leituras exatamente iguais, ate a quarta casa decimal, tiradas com 2 segundos
+de diferenca, quase certamente sao **a mesma medicao gravada duas vezes**. Uma
+maquina real nao repete valor com essa precisao.
+
+*Por que atrapalha:* inflam a contagem de ocorrencias e, na etapa de busca por
+similaridade, viram vizinhos de distancia zero que nao acrescentam nada.
 """.replace(",", ".")
 )
 
 por_rot = duplicatas["por_rotulo"]
+st.caption("Os 20 tipos com maior proporcao de leituras repetidas:")
 st.altair_chart(
     alt.Chart(por_rot.head(20))
     .mark_bar(color="#e2a03f")
     .encode(
-        x=alt.X("pct:Q", title="% de linhas duplicadas no rotulo"),
+        x=alt.X("pct:Q", title="% das leituras desse tipo"),
         y=alt.Y("fault:N", sort="-x", title=None),
         tooltip=["fault", "duplicadas", "total", "pct"],
     )
@@ -246,51 +413,62 @@ st.altair_chart(
     width="stretch",
 )
 
-with st.expander("Tabela completa por rotulo"):
-    st.dataframe(por_rot, hide_index=True, height=400)
+with st.expander("Ver a tabela completa"):
+    st.dataframe(
+        por_rot, hide_index=True, height=400,
+        column_config={
+            "fault": "tipo de falha",
+            "duplicadas": st.column_config.NumberColumn("repetidas", format="%d"),
+            "total": st.column_config.NumberColumn("total", format="%d"),
+            "pct": st.column_config.NumberColumn("%", format="%.2f%%"),
+        },
+    )
 
 st.divider()
 
 # ==========================================================================
-# 5. Outliers
+# 5. Valores fora do normal
 # ==========================================================================
-st.header("5. Outliers")
+st.header("5. Valores fora do normal")
 
 st.markdown(
     """
-Criterio de **Tukey (IQR)**: um valor e outlier se sai de `Q1 - 1,5 x IQR` a
-`Q3 + 1,5 x IQR`, e **extremo** com fator 3,0.
+### Como decidimos o que e "fora do normal"
 
-Usamos IQR e nao z-score porque varias colunas sao fortemente assimetricas
-(`z_kurtosis` tem mediana 2,5 e maximo 65): a media e o desvio padrao que o
-z-score usa ja estao contaminados pelos proprios extremos que deveriam detectar.
+Ordenamos os valores de cada coluna e vemos onde fica a metade do meio. Um valor
+que se afasta muito dessa faixa central e marcado como fora do normal.
+
+Nao usamos media e desvio padrao porque varias colunas tem valores extremos —
+`z_kurtosis` tem valor tipico 2,5 e maximo 65. A media ja estaria contaminada
+justamente pelos exageros que ela deveria encontrar.
 """
 )
 
 st.warning(
-    "**Nada e removido nem corrigido.** Nesta etapa os outliers sao apenas "
-    "identificados. Em vibracao, o pico raro costuma ser o sinal — nao o ruido: "
-    "kurtosis alta e exatamente a assinatura de impacto de rolamento. Descartar "
-    "por regra estatistica apagaria a falha que o sistema existe para detectar."
+    """
+**Nada e removido nem corrigido aqui.**
+
+Em vibracao, o pico raro costuma ser **o sinal**, nao o ruido. Kurtosis alta e
+exatamente a marca de um rolamento batendo. Apagar esses valores por regra
+estatistica jogaria fora a falha que o sistema existe para encontrar.
+"""
 )
 
 escopo = st.radio(
-    "Escopo do calculo",
-    ["Global (dataset inteiro)", "Dentro de um rotulo"],
+    "Calcular sobre",
+    ["O arquivo inteiro", "Um tipo de falha especifico"],
     horizontal=True,
-    help="Globalmente, toda leitura de um defeito severo parece outlier — o que e "
-    "esperado, e nao erro de medicao.",
 )
 
-if escopo.startswith("Global"):
+if escopo.startswith("O arquivo"):
     out = D.r_outliers_global()
-    legenda = "dataset inteiro"
+    legenda = "todas as leituras do arquivo"
 else:
-    alvo = st.selectbox("Rotulo", D.r_rotulos()["fault"].tolist())
+    alvo = st.selectbox("Tipo de falha", D.r_rotulos()["fault"].tolist())
     out = D.r_outliers_do_rotulo(alvo)
-    legenda = f"rotulo `{alvo}`"
+    legenda = f"apenas as leituras de `{alvo}`"
 
-st.caption(f"Limites calculados sobre o {legenda}.")
+st.caption(f"Limites calculados sobre {legenda}.")
 
 st.altair_chart(
     alt.Chart(out.head(15))
@@ -298,18 +476,11 @@ st.altair_chart(
     .encode(
         x=alt.X("pct_outliers:Q", title="% de leituras fora dos limites"),
         y=alt.Y("coluna:N", sort="-x", title=None),
-        color=alt.Color("pct_extremos:Q", title="% extremos", scale=alt.Scale(scheme="reds")),
+        color=alt.Color("pct_extremos:Q", title="% muito fora",
+                        scale=alt.Scale(scheme="reds")),
         tooltip=[
-            "coluna",
-            "mediana",
-            "lim_inferior",
-            "lim_superior",
-            "min",
-            "max",
-            "outliers",
-            "pct_outliers",
-            "extremos",
-            "pct_extremos",
+            "coluna", "mediana", "lim_inferior", "lim_superior",
+            "min", "max", "outliers", "pct_outliers", "extremos", "pct_extremos",
         ],
     )
     .properties(height=380),
@@ -321,45 +492,77 @@ st.dataframe(
     hide_index=True,
     height=400,
     column_config={
-        "pct_outliers": st.column_config.NumberColumn("% outliers", format="%.2f%%"),
-        "pct_extremos": st.column_config.NumberColumn("% extremos", format="%.2f%%"),
+        "coluna": "medida",
+        "mediana": st.column_config.NumberColumn("valor do meio", format="%.4f"),
+        "lim_inferior": st.column_config.NumberColumn("limite baixo", format="%.4f"),
+        "lim_superior": st.column_config.NumberColumn("limite alto", format="%.4f"),
+        "outliers": st.column_config.NumberColumn("fora", format="%d"),
+        "pct_outliers": st.column_config.NumberColumn("% fora", format="%.2f%%"),
+        "extremos": st.column_config.NumberColumn("muito fora", format="%d"),
+        "pct_extremos": st.column_config.NumberColumn("% muito fora", format="%.2f%%"),
         "max_sobre_limite": st.column_config.NumberColumn(
-            "max / limite sup",
-            format="%.2f",
-            help="Quantas vezes o maximo ultrapassa o limite superior. Valor alto "
-            "indica cauda longa de impacto, nao ruido disperso.",
+            "quantas vezes o limite", format="%.2f x",
+            help="Quantas vezes o maior valor ultrapassa o limite alto."
         ),
     },
 )
 
 st.info(
-    "Duas leituras diferentes na mesma tabela: `% outliers` alto com "
-    "`max / limite sup` proximo de 1 e dispersao larga e uniforme — provavelmente "
-    "mistura de regimes. `% outliers` baixo com `max / limite sup` na casa das "
-    "dezenas (`z_peak_acceleration_g` chega a 49x) e cauda longa de impacto: "
-    "poucos eventos, muito acima do normal. Este segundo caso e o que interessa."
+    """
+### Duas situacoes bem diferentes na mesma tabela
+
+**Muitos valores fora, mas nenhum muito longe** (coluna *quantas vezes o limite*
+perto de 1). E o caso de `z_peak_vel_comp_freq_hz`, com 25% fora. Acontece porque
+quase tudo esta grudado em 61 Hz, entao a faixa central fica estreitissima e
+qualquer variacao legitima cai fora. **E efeito do metodo, nao anomalia.**
+
+**Poucos valores fora, mas muito longe** (coluna *quantas vezes o limite* na casa
+das dezenas). `z_peak_acceleration_g` chega a **49 vezes** o limite. Sao poucos
+eventos, mas violentos. **Este e o sinal que interessa** — provavelmente o impacto
+de um rolamento com defeito.
+"""
 )
 
 st.divider()
 
 # ==========================================================================
-# 6. Decisao consolidada
+# 6. Decisao
 # ==========================================================================
-st.header("6. Colunas a descartar — decisao da Parte 0")
-st.caption("Artefato que a Parte 1 aplica. Cada linha traz o motivo verificado.")
+st.header("6. Colunas que vamos descartar")
+
+st.markdown(
+    """
+Resumo das decisoes tomadas nesta tela. A proxima etapa aplica esta lista.
+
+Sao tres motivos:
+
+- **copia** — a coluna e a mesma medida em outra unidade
+- **vazamento** — a coluna nao mede a maquina, mede a ordem em que os dados foram
+  gravados. Se ela entrar no modelo, ele acerta pelo motivo errado: descobre
+  *quando* o dado foi coletado em vez de *como* a maquina vibra. Num equipamento
+  novo isso nao funcionaria.
+- **sempre igual** — a coluna nao varia
+"""
+)
 
 st.dataframe(
     D.r_descartar(),
     hide_index=True,
-    column_config={"detalhe": st.column_config.TextColumn("detalhe", width="large")},
+    column_config={
+        "coluna": "coluna",
+        "motivo": "motivo",
+        "detalhe": st.column_config.TextColumn("explicacao", width="large"),
+    },
 )
 
 st.markdown(
     """
-**Nao entram na lista de descarte**, apesar da suspeita inicial:
+### O que **nao** vai ser descartado, apesar da suspeita inicial
 
-- `z_peak_vel_comp_freq_hz` / `x_peak_vel_comp_freq_hz` — nao sao constantes (secao 3.1)
-- `temperature_f` — descartada por redundancia com `temperature_c`, nao por falta de sinal
-- `rpm` — mantida, mas tratada como **categorica de regime** (5 patamares), nao continua
+| Coluna | Por que fica |
+|---|---|
+| `z_peak_vel_comp_freq_hz` e `x_peak_vel_comp_freq_hz` | Nao sao fixas em 61 Hz — tem 79 e 50 valores diferentes |
+| `temperature_f` | Sai, mas por ser copia de `temperature_c`, nao por falta de informacao |
+| `rpm` | Fica. So que sera tratada como **5 regimes de rotacao**, nao como medida continua |
 """
 )

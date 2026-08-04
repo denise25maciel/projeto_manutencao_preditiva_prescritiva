@@ -1,9 +1,8 @@
-"""Valores unicos de `fault` e a assinatura de vibracao de cada um.
+"""Valores unicos de `fault` e o comportamento medido de cada um.
 
-A secao 2 compara ate 4 rotulos. A ordem dos blocos e proposital: primeiro o
-comportamento ao longo do tempo (todas as colunas empilhadas), depois o resumo
-em medianas. Ver a serie antes da estatistica evita ler uma mediana sem saber
-se ela descreve um patamar estavel ou a media de dois regimes distintos.
+Ordem dos blocos na secao 2: primeiro a serie ao longo do tempo, depois o resumo
+em medianas. Ver a curva antes da estatistica evita ler uma mediana sem saber se
+ela descreve um patamar estavel ou a media de dois regimes distintos.
 """
 
 from __future__ import annotations
@@ -19,9 +18,10 @@ D.configurar_pagina("Analise de Falhas", "📊")
 
 # Acima disso as colunas ficam estreitas demais para os graficos serem lidos.
 MAX_ROTULOS = 4
+CHAVE_ROTULOS = "rotulos_selecionados"
 
 st.title("📊 Analise de Falhas")
-st.caption("Valores unicos da coluna `fault` e o comportamento medido de cada um.")
+st.caption("Escolha um ou mais tipos de falha e veja como cada um se comporta.")
 
 try:
     rotulos = D.r_rotulos()
@@ -30,31 +30,36 @@ except FileNotFoundError as e:
 
 familias = D.r_familias()
 # `perfil_rotulos` traz contagem e janela; `sugerir_familias` traz o agrupamento
-# proposto. Juntar aqui evita repetir groupby em cada widget.
-# So trazemos `familia_sugerida` do segundo: `e_problema` existe nos dois (e a
-# mesma funcao por tras) e o merge criaria `e_problema_x` / `e_problema_y`.
+# proposto. So trazemos `familia_sugerida` do segundo: `e_problema` existe nos
+# dois e o merge criaria `e_problema_x` / `e_problema_y`.
 tabela = rotulos.merge(familias[["fault", "familia_sugerida"]], on="fault", how="left")
 
 # ==========================================================================
-# 1. Panorama dos valores unicos
+# 1. Panorama
 # ==========================================================================
-st.header("1. Valores unicos de `fault`")
+st.header("1. Os tipos de falha do arquivo")
 
 n_total = len(tabela)
 n_problema = int(tabela["e_problema"].sum())
 n_familias = tabela["familia_sugerida"].nunique()
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Rotulos distintos", n_total)
-c2.metric("Defeitos", n_problema)
-c3.metric("Estados (nao defeito)", n_total - n_problema)
-c4.metric("Familias sugeridas", n_familias)
+c1.metric("Nomes diferentes", n_total)
+c2.metric("Sao defeitos", n_problema)
+c3.metric("Sao so estados", n_total - n_problema)
+c4.metric("Grupos (familias)", n_familias)
 
 st.markdown(
     f"""
-Os {n_total} rotulos nao sao {n_total} defeitos. A coluna `familia_sugerida` agrupa
-por radical — e **sugestao heuristica**, para tornar a lista navegavel. A decisao
-final vive no `data/fault_map.yaml`, curado a mao na Parte 1.
+A coluna `fault` tem **{n_total} nomes diferentes**, mas nao sao {n_total} defeitos.
+O mesmo problema aparece escrito de varias formas.
+
+Para organizar isso, agrupamos os nomes por radical em **{n_familias} familias**.
+Exemplo: `rolamento_inner`, `rolamento_inner_2`, `new_rolamento_inner_0` e
+`rolamento_inner_carga` viram todos a familia `rolamento_inner`.
+
+Esse agrupamento e **automatico e provisorio** — a versao definitiva e conferida a
+mao no arquivo `data/fault_map.yaml`.
 """
 )
 
@@ -62,7 +67,7 @@ col_f, col_b = st.columns([2, 3])
 with col_f:
     filtro_tipo = st.radio("Mostrar", ["Todos", "So defeitos", "So estados"], horizontal=True)
 with col_b:
-    busca = st.text_input("Filtrar por texto", placeholder="ex.: rolamento, cocked, normal")
+    busca = st.text_input("Procurar por nome", placeholder="ex.: rolamento, cocked, normal")
 
 vis = tabela
 if filtro_tipo == "So defeitos":
@@ -72,7 +77,7 @@ elif filtro_tipo == "So estados":
 if busca:
     vis = vis[vis["fault"].str.contains(busca, case=False, na=False)]
 
-st.caption(f"{len(vis)} de {n_total} rotulos.")
+st.caption(f"Mostrando {len(vis)} de {n_total} nomes.")
 st.dataframe(
     vis[
         [
@@ -89,18 +94,21 @@ st.dataframe(
     hide_index=True,
     height=340,
     column_config={
-        "fault": "rotulo",
-        "familia_sugerida": "familia (sugerida)",
-        "e_problema": st.column_config.CheckboxColumn("defeito?"),
+        "fault": "nome em `fault`",
+        "familia_sugerida": "familia",
+        "e_problema": st.column_config.CheckboxColumn("e defeito?"),
         "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
-        "pct": st.column_config.NumberColumn("% do total", format="%.2f%%"),
+        "pct": st.column_config.NumberColumn("% do arquivo", format="%.2f%%"),
         "primeira": st.column_config.DatetimeColumn("1a leitura", format="DD/MM/YY HH:mm"),
         "ultima": st.column_config.DatetimeColumn("ultima leitura", format="DD/MM/YY HH:mm"),
-        "span_horas": st.column_config.NumberColumn("span (h)", format="%.1f"),
+        "span_horas": st.column_config.NumberColumn(
+            "horas cobertas", format="%.1f",
+            help="Tempo entre a primeira e a ultima leitura desse nome."
+        ),
     },
 )
 
-with st.expander("Leituras por familia sugerida"):
+with st.expander("Ver o total de leituras por familia"):
     por_fam = (
         tabela.groupby("familia_sugerida", as_index=False)
         .agg(rotulos=("fault", "count"), leituras=("n_leituras", "sum"))
@@ -110,7 +118,7 @@ with st.expander("Leituras por familia sugerida"):
         alt.Chart(por_fam)
         .mark_bar(color="#4c78a8")
         .encode(
-            x=alt.X("leituras:Q"),
+            x=alt.X("leituras:Q", title="leituras"),
             y=alt.Y("familia_sugerida:N", sort="-x", title=None),
             tooltip=["familia_sugerida", "rotulos", "leituras"],
         )
@@ -121,25 +129,60 @@ with st.expander("Leituras por familia sugerida"):
 st.divider()
 
 # ==========================================================================
-# 2. Caracteristicas dos rotulos selecionados
+# 2. Analise de um ou mais rotulos
 # ==========================================================================
-st.header("2. Caracteristicas de um ou mais rotulos")
+st.header("2. Analisar um ou mais tipos de falha")
 
-opcoes = tabela.sort_values("n_leituras", ascending=False)["fault"].tolist()
+st.markdown(
+    "Escolha primeiro a **familia** para reduzir a lista, depois os **nomes** que "
+    "quer comparar. Ate 4 por vez — cada um ganha uma cor e aparece junto dos outros "
+    "nos mesmos graficos."
+)
+
+# --- filtro por familia ----------------------------------------------------
+familias_disponiveis = sorted(tabela["familia_sugerida"].dropna().unique())
+familias_escolhidas = st.multiselect(
+    "1) Familia (opcional)",
+    familias_disponiveis,
+    default=[],
+    help="Deixe vazio para ver todos os nomes.",
+    format_func=lambda f: (
+        f"{f}  ({int(tabela.loc[tabela.familia_sugerida == f, 'n_leituras'].sum())} leituras)"
+    ),
+)
+
+if familias_escolhidas:
+    disponivel = tabela[tabela["familia_sugerida"].isin(familias_escolhidas)]
+else:
+    disponivel = tabela
+
+opcoes = disponivel.sort_values("n_leituras", ascending=False)["fault"].tolist()
 _leituras = dict(zip(tabela["fault"], tabela["n_leituras"]))
 
+# Ao trocar a familia, a selecao anterior pode conter nomes que saem da lista.
+# O Streamlit reclama se o valor guardado nao existe entre as opcoes, entao
+# limpamos antes de desenhar o widget.
+if CHAVE_ROTULOS not in st.session_state:
+    st.session_state[CHAVE_ROTULOS] = opcoes[:1]
+else:
+    validos = [r for r in st.session_state[CHAVE_ROTULOS] if r in opcoes]
+    st.session_state[CHAVE_ROTULOS] = validos or opcoes[:1]
+
+if familias_escolhidas:
+    st.caption(
+        f"{len(opcoes)} nome(s) na(s) familia(s) escolhida(s), de {n_total} no total."
+    )
+
 selecionados = st.multiselect(
-    "Rotulos",
+    "2) Nomes para comparar",
     opcoes,
-    default=opcoes[:1],
+    key=CHAVE_ROTULOS,
     max_selections=MAX_ROTULOS,
     format_func=lambda r: f"{r}  ({_leituras[r]} leituras)",
-    help=f"Ate {MAX_ROTULOS} rotulos. As series de todos aparecem no mesmo grafico, "
-         "uma cor por rotulo.",
 )
 
 if not selecionados:
-    st.info("Selecione ao menos um rotulo para ver a analise.")
+    st.info("Escolha ao menos um nome para ver a analise.")
     st.stop()
 
 n_sel = len(selecionados)
@@ -153,8 +196,8 @@ ordenado_de = {r: D.r_ordenado(r) for r in selecionados}
 numericas = D.r_numericas()
 padrao = "z_rms_velocity_mm_s" if "z_rms_velocity_mm_s" in numericas else numericas[0]
 
-# --- 2a. Cabecalho comparativo ---------------------------------------------
-st.subheader("Panorama")
+# --- 2a. Panorama ----------------------------------------------------------
+st.subheader("Resumo de cada um")
 
 for coluna, rotulo in zip(st.columns(n_sel), selecionados):
     info = info_de[rotulo]
@@ -166,32 +209,35 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
             unsafe_allow_html=True,
         )
         st.metric("Leituras", f"{int(info['n_leituras']):,}".replace(",", "."))
-        st.metric("% do dataset", f"{info['pct']:.2f}%")
-        st.metric("Familia sugerida", info["familia_sugerida"])
-        st.metric("Classificacao", "Defeito" if info["e_problema"] else "Estado")
+        st.metric("% do arquivo", f"{info['pct']:.2f}%")
+        st.metric("Familia", info["familia_sugerida"])
+        st.metric("E defeito?", "Sim" if info["e_problema"] else "Nao, e um estado")
         st.metric("Sessoes de coleta", int(ordenado["sessao"].nunique()))
-        st.metric("Span coberto", f"{info['span_horas']:.1f} h")
+        st.metric("Horas cobertas", f"{info['span_horas']:.1f} h")
 
 estados = [r for r in selecionados if not info_de[r]["e_problema"]]
 if estados:
     st.info(
-        f"**{', '.join(estados)}** — classificado(s) como **estado**, nao defeito. "
-        "No pipeline final o guardrail G2 encerra o fluxo prescritivo aqui: nao ha "
-        "acao corretiva a sugerir para uma maquina normal, em teste ou desligada."
+        f"**{', '.join(estados)}** nao e defeito, e um estado da maquina "
+        "(operando normal, em teste ou desligada).\n\n"
+        "No sistema final, isso encerra o atendimento: nao ha o que corrigir numa "
+        "maquina que esta funcionando bem."
     )
 
 st.divider()
 
 # --- 2b. Serie temporal ----------------------------------------------------
-st.subheader("Serie temporal")
+st.subheader("Como os valores variaram no tempo")
 
-st.caption(
-    "Eixo X = **data e hora reais da coleta**, em UTC, como gravadas em `created_at`. "
-    "Nada e normalizado nem deslocado. O arquivo bruto nao esta em ordem cronologica — "
-    "a ordenacao e feita aqui. Intervalos maiores que "
-    f"{int(D.config.GAP_NOVA_SESSAO_S)} s marcam fronteira de sessao, e a linha "
-    "**quebra** nessas fronteiras: ligar o fim de uma sessao ao inicio da seguinte "
-    "inventaria uma transicao que nunca existiu."
+st.markdown(
+    """
+Cada grafico abaixo e uma coluna de medida. O eixo horizontal e a **data e hora
+reais** em que a leitura foi gravada (em UTC). Nada foi deslocado nem aproximado.
+
+**A linha corta em alguns pontos de proposito.** Quando passam mais de 60 segundos
+entre uma leitura e a seguinte, entendemos que uma gravacao terminou e outra
+comecou depois. Ligar as duas desenharia uma transicao que nunca aconteceu.
+"""
 )
 
 # Janela real de cada rotulo. Precisa ficar visivel porque os rotulos foram
@@ -210,21 +256,21 @@ janelas = pd.DataFrame(
     ]
 )
 
+st.caption("Quando cada um foi gravado:")
 st.dataframe(
     janelas,
     hide_index=True,
     column_config={
-        "inicio": st.column_config.DatetimeColumn("1a leitura (UTC)",
+        "inicio": st.column_config.DatetimeColumn("primeira leitura",
                                                   format="DD/MM/YYYY HH:mm:ss"),
-        "fim": st.column_config.DatetimeColumn("ultima leitura (UTC)",
+        "fim": st.column_config.DatetimeColumn("ultima leitura",
                                                format="DD/MM/YYYY HH:mm:ss"),
-        "sessoes": st.column_config.NumberColumn("sessoes", format="%d"),
+        "sessoes": st.column_config.NumberColumn("gravacoes", format="%d"),
         "leituras": st.column_config.NumberColumn("leituras", format="%d"),
     },
 )
 
 if n_sel > 1:
-    # Ha sobreposicao temporal entre algum par de rotulos?
     sobrepoe = any(
         (janelas.loc[i, "inicio"] <= janelas.loc[j, "fim"])
         and (janelas.loc[j, "inicio"] <= janelas.loc[i, "fim"])
@@ -233,48 +279,43 @@ if n_sel > 1:
     )
     if not sobrepoe:
         st.warning(
-            "**Os rotulos selecionados nao compartilham janela de coleta.** No eixo de "
-            "tempo real eles aparecem em trechos separados, nao como curvas concorrentes. "
-            "Isso e o dado, nao um defeito do grafico: cada condicao foi gravada numa "
-            "campanha propria. Use o zoom (roda do mouse) para entrar em cada trecho."
+            "**Estes tipos de falha foram gravados em dias diferentes.** Por isso as "
+            "linhas aparecem em trechos separados do grafico, e nao uma em cima da "
+            "outra. Isso e o dado, nao um erro do grafico.\n\n"
+            "Para olhar de perto, use a roda do mouse sobre o grafico para dar zoom."
         )
     else:
         st.info(
-            "Os rotulos tem janelas de coleta que se cruzam — as curvas vao aparecer "
-            "sobrepostas nos trechos em comum."
+            "Estes tipos de falha foram gravados em periodos que se cruzam — as linhas "
+            "vao aparecer sobrepostas nos trechos em comum."
         )
 
 col_todas, col_faixa, col_altura = st.columns([1, 1, 2])
 with col_todas:
     todas_colunas = st.checkbox(
-        "Todas as colunas numericas",
+        "Todas as colunas",
         value=True,
-        help="Desmarque para escolher um subconjunto e ganhar resolucao — o orcamento "
-             "de pontos e dividido entre os graficos.",
+        help="Desmarque para escolher poucas colunas e ver mais detalhe em cada uma.",
     )
 with col_faixa:
     mostrar_faixa = st.checkbox(
-        "Mostrar faixa min-max",
+        "Mostrar minimo e maximo",
         value=False,
-        help="A faixa preserva os picos que a reamostragem esconderia. Com muitas "
-             "series ela polui a leitura, por isso vem desligada.",
+        help="Desenha uma faixa clara entre o menor e o maior valor de cada trecho.",
     )
 with col_altura:
-    # Altura no controle do usuario em vez de fixa: a leitura util depende de
-    # quantas colunas estao na tela e do tamanho do monitor.
     altura = st.slider(
-        "Altura de cada grafico (px)", 200, 700, 360, step=20,
-        help="Graficos mais altos separam melhor as variacoes pequenas; com muitas "
-             "colunas a pagina fica longa.",
+        "Altura dos graficos (px)", 200, 700, 360, step=20,
+        help="Graficos mais altos separam melhor variacoes pequenas.",
     )
 
 if todas_colunas:
     colunas_serie = numericas
 else:
-    colunas_serie = st.multiselect("Colunas para plotar", numericas, default=[padrao])
+    colunas_serie = st.multiselect("Colunas para mostrar", numericas, default=[padrao])
 
 if not colunas_serie:
-    st.caption("Selecione ao menos uma coluna.")
+    st.caption("Escolha ao menos uma coluna.")
 else:
     n_col = len(colunas_serie)
 
@@ -293,18 +334,31 @@ else:
 
     reamostrados = [r for r in selecionados if series[r]["reamostrado"]]
     if reamostrados:
-        detalhe = ", ".join(
-            f"`{r}` ({series[r]['n_original']:,} → {series[r]['n_pontos']:,} pontos, "
-            f"blocos de {series[r]['fator']})".replace(",", ".")
-            for r in reamostrados
-        )
-        st.caption(
-            f"**Reamostrado** — {n_col} coluna(s) x {n_sel} rotulo(s) = "
-            f"{n_col * n_sel} series, com orcamento de {orcamento} pontos cada: "
-            f"{detalhe}. A linha e a mediana do bloco, e cada ponto carrega o "
-            "`created_at` real da primeira leitura do bloco — nenhum instante e "
-            "inventado. Para mais resolucao, desmarque *Todas as colunas*."
-        )
+        with st.expander("Por que os graficos mostram menos pontos que o total de leituras"):
+            detalhe = "\n".join(
+                f"- `{r}`: {series[r]['n_original']:,} leituras viraram "
+                f"{series[r]['n_pontos']:,} pontos (grupos de {series[r]['fator']})".replace(",", ".")
+                for r in reamostrados
+            )
+            st.markdown(
+                f"""
+Um navegador nao aguenta desenhar centenas de milhares de pontos. Como aqui ha
+**{n_col} coluna(s) x {n_sel} tipo(s) de falha = {n_col * n_sel} linhas** ao mesmo
+tempo, agrupamos leituras vizinhas e mostramos o **valor do meio** de cada grupo.
+
+{detalhe}
+
+Duas garantias:
+
+1. **Nenhuma data e inventada.** Cada ponto usa a hora real da primeira leitura do
+   seu grupo.
+2. **Os picos nao somem.** Marque *Mostrar minimo e maximo* para ver a faixa
+   completa de cada grupo. Isso importa: em vibracao, o pico raro costuma ser o
+   sinal do defeito, nao ruido.
+
+Para ver mais detalhe, desmarque *Todas as colunas* e escolha poucas.
+"""
+            )
 
     escala_cor = alt.Scale(domain=selecionados, range=[cor_de[r] for r in selecionados])
 
@@ -327,7 +381,7 @@ else:
         # (rotulo) e `detail` (sessao). Isso da uma linha por par
         # rotulo-sessao — cores distintas entre rotulos, e quebra nos gaps.
         base_ch = alt.Chart(junto).encode(
-            x=alt.X("created_at:T", title="data / hora da coleta (UTC)"),
+            x=alt.X("created_at:T", title="data e hora da coleta (UTC)"),
             color=alt.Color("rotulo:N", title=None, scale=escala_cor,
                             legend=alt.Legend(orient="bottom")),
             detail=alt.Detail("sessao:N"),
@@ -336,13 +390,13 @@ else:
         linha = base_ch.mark_line(strokeWidth=1.4).encode(
             y=alt.Y("valor:Q", title=coluna_dado, scale=alt.Scale(zero=False)),
             tooltip=[
-                alt.Tooltip("rotulo:N", title="rotulo"),
-                alt.Tooltip("created_at:T", title="instante (UTC)",
+                alt.Tooltip("rotulo:N", title="tipo de falha"),
+                alt.Tooltip("created_at:T", title="quando",
                             format="%d/%m/%Y %H:%M:%S"),
-                alt.Tooltip("sessao:Q", title="sessao"),
-                alt.Tooltip("valor:Q", title="mediana", format=".4f"),
-                alt.Tooltip("minimo:Q", title="min", format=".4f"),
-                alt.Tooltip("maximo:Q", title="max", format=".4f"),
+                alt.Tooltip("sessao:Q", title="gravacao no"),
+                alt.Tooltip("valor:Q", title="valor", format=".4f"),
+                alt.Tooltip("minimo:Q", title="minimo do grupo", format=".4f"),
+                alt.Tooltip("maximo:Q", title="maximo do grupo", format=".4f"),
             ],
         )
 
@@ -361,13 +415,11 @@ else:
 
 st.divider()
 
-# --- 2c. Assinatura comparada ----------------------------------------------
-st.subheader("Assinatura: o que distingue cada rotulo")
+# --- 2c. Assinatura --------------------------------------------------------
+st.subheader("O que diferencia cada tipo de falha")
 
 comparacoes = {r: D.r_comparacao(r) for r in selecionados}
 
-# Tabela unica: uma linha por feature, uma coluna por rotulo. Comparar valores
-# na horizontal e mais direto que alternar entre tabelas separadas.
 primeiro = comparacoes[selecionados[0]]
 comparada = primeiro[["feature", "mediana_global"]].copy()
 for r in selecionados:
@@ -375,19 +427,27 @@ for r in selecionados:
     comparada[f"{r}"] = comparada["feature"].map(c["mediana_rotulo"])
     comparada[f"Δ% {r}"] = comparada["feature"].map(c["desvio_pct"])
 
-# Ordem compartilhada por todos os blocos: features que mais separam ALGUM dos
-# rotulos selecionados vem primeiro. Sem ordem comum, os graficos lado a lado
-# ficariam com linhas trocadas e a comparacao visual nao funcionaria.
+# Ordem compartilhada por todos os graficos: sem ela, cada grafico ordenaria pelo
+# proprio desvio e as linhas nao corresponderiam entre as colunas.
 colunas_desvio = [f"Δ% {r}" for r in selecionados]
 comparada["_max_abs"] = comparada[colunas_desvio].abs().max(axis=1)
 comparada = comparada.sort_values("_max_abs", ascending=False).drop(columns="_max_abs")
 ordem_features = comparada["feature"].tolist()
 
-st.caption(
-    "Mediana de cada rotulo contra a mediana do dataset inteiro. `Δ%` e o quanto a "
-    "feature se afasta do comportamento geral. Ordenado pelo maior desvio entre os "
-    "rotulos escolhidos — a mesma ordem vale para os graficos abaixo, para que as "
-    "linhas correspondam entre as colunas."
+st.markdown(
+    """
+Aqui comparamos o **valor tipico** de cada tipo de falha com o valor tipico do
+arquivo inteiro.
+
+- A coluna **`mediana global`** e o valor do meio considerando todas as 166 mil leituras
+- A coluna com o **nome da falha** e o valor do meio so daquele tipo
+- A coluna **`Δ%`** e a diferenca entre os dois, em porcentagem
+
+Um `Δ%` de +15% significa: nessa falha, essa medida fica 15% acima do normal.
+Quanto maior o `Δ%`, mais aquela medida serve para reconhecer a falha.
+
+As linhas estao ordenadas da maior para a menor diferenca.
+"""
 )
 
 st.dataframe(
@@ -395,7 +455,7 @@ st.dataframe(
     hide_index=True,
     height=min(560, 40 + 35 * len(comparada)),
     column_config={
-        "feature": st.column_config.TextColumn("feature", width="medium"),
+        "feature": st.column_config.TextColumn("medida", width="medium"),
         "mediana_global": st.column_config.NumberColumn("mediana global", format="%.4f"),
         **{r: st.column_config.NumberColumn(r, format="%.4f") for r in selecionados},
         **{
@@ -405,14 +465,20 @@ st.dataframe(
     },
 )
 
+st.caption(
+    "Os mesmos numeros em grafico. Barra para a direita = acima do normal; "
+    "para a esquerda = abaixo. As medidas aparecem na mesma ordem nos dois "
+    "graficos, para poder comparar linha a linha."
+)
+
 for coluna, rotulo in zip(st.columns(n_sel), selecionados):
     with coluna:
-        st.caption(f"**{rotulo}** — desvio da mediana global")
+        st.caption(f"**{rotulo}**")
         st.altair_chart(
             alt.Chart(comparacoes[rotulo])
             .mark_bar(color=cor_de[rotulo])
             .encode(
-                x=alt.X("desvio_pct:Q", title="Δ% vs global"),
+                x=alt.X("desvio_pct:Q", title="diferenca do normal (%)"),
                 y=alt.Y("feature:N", sort=ordem_features, title=None),
                 tooltip=["feature", "mediana_rotulo", "mediana_global", "desvio_pct"],
             )
@@ -420,10 +486,18 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
             width="stretch",
         )
 
-with st.expander("Estatistica detalhada por rotulo (quartis, desvio, CV)"):
-    st.caption(
-        "`cv` e o coeficiente de variacao: quanto maior, mais dispersa a classe e "
-        "mais o kNN vai confundi-la na Parte 3."
+with st.expander("Ver estatistica completa de cada tipo (quartis, desvio, variacao)"):
+    st.markdown(
+        """
+`cv` significa **coeficiente de variacao**: o quanto os valores se espalham em
+relacao a media.
+
+- `cv` baixo — as leituras desse tipo sao parecidas entre si
+- `cv` alto — as leituras variam muito, mesmo sendo a mesma falha
+
+Isso importa para a proxima etapa: tipos com `cv` alto sao os que o sistema mais
+vai confundir com outros.
+"""
     )
     for coluna, rotulo in zip(st.columns(n_sel), selecionados):
         with coluna:
@@ -439,10 +513,10 @@ with st.expander("Estatistica detalhada por rotulo (quartis, desvio, CV)"):
 
 st.divider()
 
-# --- 2d. Distribuicao de uma feature ---------------------------------------
-st.subheader("Distribuicao de uma feature")
+# --- 2d. Distribuicao ------------------------------------------------------
+st.subheader("Como os valores se distribuem")
 
-feature = st.selectbox("Feature", numericas, index=numericas.index(padrao))
+feature = st.selectbox("Medida", numericas, index=numericas.index(padrao))
 
 serie_global = D.dados()[feature].to_numpy()
 series_rotulo = {r: D.r_serie(r, feature) for r in selecionados}
@@ -460,10 +534,17 @@ centros = (bordas[:-1] + bordas[1:]) / 2
 h_glo, _ = np.histogram(serie_global, bins=bordas)
 dens_glo = h_glo / max(h_glo.sum(), 1)
 
-st.caption(
-    "Densidade, nao contagem — cada rotulo tem um numero diferente de leituras e em "
-    "contagem bruta o menor sumiria. Os intervalos do histograma sao os mesmos nos "
-    "graficos, entao as formas sao comparaveis."
+st.markdown(
+    """
+Cada grafico mostra **onde os valores dessa medida se concentram**. A area colorida
+e o tipo de falha escolhido; a cinza e o arquivo inteiro, para comparar.
+
+Se a area colorida estiver deslocada em relacao a cinza, essa medida distingue bem
+a falha. Se estiverem em cima uma da outra, essa medida nao ajuda a reconhece-la.
+
+O eixo vertical mostra **proporcao**, nao contagem — assim um tipo com poucas
+leituras nao fica invisivel ao lado de um com muitas.
+"""
 )
 
 for coluna, rotulo in zip(st.columns(n_sel), selecionados):
@@ -472,7 +553,7 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
         {
             "valor": np.concatenate([centros, centros]),
             "densidade": np.concatenate([h_rot / max(h_rot.sum(), 1), dens_glo]),
-            "serie": [rotulo] * len(centros) + ["dataset inteiro"] * len(centros),
+            "serie": [rotulo] * len(centros) + ["arquivo inteiro"] * len(centros),
         }
     )
     with coluna:
@@ -482,12 +563,12 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
             .mark_area(opacity=0.55, interpolate="step")
             .encode(
                 x=alt.X("valor:Q", title=feature),
-                y=alt.Y("densidade:Q", title="densidade", stack=None),
+                y=alt.Y("densidade:Q", title="proporcao", stack=None),
                 color=alt.Color(
                     "serie:N",
                     title=None,
                     scale=alt.Scale(
-                        domain=[rotulo, "dataset inteiro"],
+                        domain=[rotulo, "arquivo inteiro"],
                         range=[cor_de[rotulo], "#b0b0b0"],
                     ),
                     legend=alt.Legend(orient="bottom"),
@@ -495,7 +576,7 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
                 tooltip=[
                     "serie",
                     alt.Tooltip("valor:Q", format=".4f"),
-                    alt.Tooltip("densidade:Q", format=".4f"),
+                    alt.Tooltip("densidade:Q", title="proporcao", format=".4f"),
                 ],
             )
             .properties(height=260),
@@ -505,11 +586,18 @@ for coluna, rotulo in zip(st.columns(n_sel), selecionados):
 st.divider()
 
 # --- 2e. Outliers ----------------------------------------------------------
-with st.expander("Outliers dentro de cada rotulo (criterio IQR, apenas reportado)"):
-    st.caption(
-        "Limites recalculados **dentro** de cada rotulo. Isso separa a variacao "
-        "natural da classe de um pico que destoa da propria classe — globalmente, "
-        "toda leitura de um defeito severo pareceria outlier, o que nao ajuda."
+with st.expander("Valores fora do normal dentro de cada tipo"):
+    st.markdown(
+        """
+Um valor e considerado **fora do normal** quando se afasta muito do meio da propria
+classe. O calculo aqui e feito **dentro de cada tipo de falha**, nao no arquivo todo.
+
+A diferenca importa: se comparassemos com o arquivo todo, quase toda leitura de uma
+falha grave pareceria anormal — o que e esperado, e nao ajuda em nada. Assim vemos
+o que destoa **dentro** da propria falha.
+
+Nada e removido. Aqui so apontamos.
+"""
     )
     for coluna, rotulo in zip(st.columns(n_sel), selecionados):
         with coluna:
@@ -521,14 +609,28 @@ with st.expander("Outliers dentro de cada rotulo (criterio IQR, apenas reportado
                 ],
                 hide_index=True,
                 height=320,
+                column_config={
+                    "coluna": "medida",
+                    "mediana": st.column_config.NumberColumn("valor do meio", format="%.4f"),
+                    "lim_inferior": st.column_config.NumberColumn("limite baixo", format="%.4f"),
+                    "lim_superior": st.column_config.NumberColumn("limite alto", format="%.4f"),
+                    "outliers": st.column_config.NumberColumn("fora", format="%d"),
+                    "pct_outliers": st.column_config.NumberColumn("% fora", format="%.2f%%"),
+                },
             )
 
 # --- 2f. Base ordenada -----------------------------------------------------
-with st.expander("Base de cada rotulo em ordem cronologica"):
-    st.caption(
-        "Em abas, e nao lado a lado: sao 26 colunas por rotulo, e dividir a largura "
-        "deixaria a tabela ilegivel. `sessao` identifica a campanha de coleta; "
-        "`delta_s` e o intervalo desde a leitura anterior dentro da sessao."
+with st.expander("Ver as leituras em ordem de data"):
+    st.markdown(
+        """
+As leituras de cada tipo, da mais antiga para a mais recente.
+
+- **`gravacao`** — numero da sessao de coleta. Muda quando ha uma pausa longa.
+- **`intervalo (s)`** — segundos desde a leitura anterior. Fica vazio na primeira
+  leitura de cada gravacao.
+
+Cada tipo esta numa aba porque a tabela tem 26 colunas — lado a lado ficaria ilegivel.
+"""
     )
     for aba, rotulo in zip(st.tabs(selecionados), selecionados):
         with aba:
@@ -543,15 +645,16 @@ with st.expander("Base de cada rotulo em ordem cronologica"):
                 height=400,
                 column_config={
                     "created_at": st.column_config.DatetimeColumn(
-                        "created_at", format="DD/MM/YY HH:mm:ss.SSS"
+                        "quando", format="DD/MM/YY HH:mm:ss.SSS"
                     ),
-                    "delta_s": st.column_config.NumberColumn("delta (s)", format="%.2f"),
+                    "sessao": "gravacao",
+                    "delta_s": st.column_config.NumberColumn("intervalo (s)", format="%.2f"),
                 },
             )
             st.download_button(
-                "Baixar CSV ordenado",
+                "Baixar em CSV",
                 ordenado[colunas_tabela].to_csv(index=False).encode("utf-8"),
-                file_name=f"{rotulo}_cronologico.csv",
+                file_name=f"{rotulo}_ordenado_por_data.csv",
                 mime="text/csv",
                 key=f"dl_{rotulo}",
             )
@@ -559,21 +662,62 @@ with st.expander("Base de cada rotulo em ordem cronologica"):
 st.divider()
 
 # ==========================================================================
-# 3. Tabela de assinaturas — entrega da Parte 0
+# 3. Tabela de assinaturas
 # ==========================================================================
-st.header("3. Tabela de assinaturas por rotulo")
-st.caption(
-    "Entrega da Parte 0: e esta tabela que sera cruzada com o que os PDFs de "
-    "procedimento descrevem. Divergencia entre o medido e o documentado e achado, "
-    "nao erro."
+st.header("3. Tabela de assinaturas")
+
+st.markdown(
+    """
+### O que e uma assinatura
+
+Cada tipo de falha faz a maquina vibrar de um jeito diferente. Desalinhamento
+sacode mais num sentido; rolamento quebrado gera pancadinhas rapidas; peca
+desbalanceada balanca de forma constante.
+
+A **assinatura** e o retrato desse jeito de vibrar, em numeros: para cada tipo de
+falha, o valor tipico de cada medida do sensor.
+
+### Como ler a tabela
+
+Cada **linha** e um nome da coluna `fault`. Cada **coluna** e uma medida do sensor.
+O numero na celula e o **valor do meio** (mediana) daquela medida, naquele tipo.
+
+Exemplo: se `rolamento_inner` tem `z_kurtosis = 2,44`, esse e o valor tipico de
+kurtosis quando essa falha esta presente.
+
+### Por que "valor do meio" e nao media
+
+`kurtosis` e `crest_factor` medem picos. Um unico impacto forte, mesmo que dure
+um segundo, puxa a **media** do tipo inteiro para cima e da uma impressao errada.
+O **valor do meio** ignora esse exagero e descreve o comportamento comum.
+
+### Para que serve
+
+Esta tabela e a ponte entre os **sensores** e os **manuais**.
+
+Os manuais de procedimento descrevem sintomas em palavras — *"vibracao radial
+elevada"*, *"vibracao em altas frequencias"*. Esta tabela diz esses mesmos sintomas
+em numeros. Cruzar as duas coisas responde: **o que o sensor mede bate com o que o
+manual descreve?**
+
+Quando nao bater, e um achado para investigar — nao um erro de calculo.
+"""
 )
 
 minimo = st.slider(
-    "Ignorar rotulos com menos de N leituras",
+    "Ignorar tipos com menos de N leituras",
     0,
     500,
     100,
     step=50,
-    help="Varios rotulos tem 2 leituras; uma mediana sobre isso nao significa nada.",
+    help="Alguns nomes tem so 2 leituras. Um valor tipico calculado sobre 2 leituras "
+         "nao significa nada.",
 )
 st.dataframe(D.r_assinaturas(minimo), hide_index=True, height=400)
+
+st.caption(
+    "As colunas comecadas por `z_` e `x_` sao os dois eixos do sensor. "
+    "`rms` = valor medio da vibracao; `peak` = valor de pico; `kurtosis` e "
+    "`crest_factor` medem o quanto ha de impacto; `high_freq_rms_accel_g` e a "
+    "vibracao em alta frequencia, tipica de rolamento com defeito."
+)

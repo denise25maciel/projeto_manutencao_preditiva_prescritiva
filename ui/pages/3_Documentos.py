@@ -1,10 +1,9 @@
-"""Procedimentos convertidos em Markdown: titulos, campos e cobertura.
+"""Os manuais de procedimento convertidos em Markdown.
 
-Responde tres perguntas, nesta ordem:
-  1. Quais documentos existem e o que cada um tem dentro?
-  2. Que campos faltam em cada um?
-  3. Que familia de falha do banner.csv fica sem documento — ou seja, onde o
-     guardrail G3 vai recusar prescricao?
+Responde tres perguntas:
+  1. Quais manuais existem e o que tem dentro de cada um?
+  2. O que falta em cada manual?
+  3. Que tipo de falha fica sem manual — ou seja, onde o sistema tera de recusar?
 """
 
 from __future__ import annotations
@@ -17,8 +16,20 @@ import _dados as D
 
 D.configurar_pagina("Documentos", "📄")
 
-st.title("📄 Documentos de Procedimento")
-st.caption("PDFs convertidos em Markdown, com a cobertura de campos e a ligacao com `fault`.")
+st.title("📄 Manuais de Procedimento")
+st.caption("Os 6 PDFs da empresa, convertidos para texto e ligados aos tipos de falha.")
+
+st.markdown(
+    """
+Os manuais chegaram em PDF. PDF e otimo para ler, mas ruim para o computador
+procurar dentro. Aqui eles sao convertidos para **Markdown** — texto simples, com
+as secoes numeradas preservadas.
+
+Isso importa porque, mais adiante, o sistema precisa **citar a fonte**: nao basta
+dizer "alinhe o motor", tem de dizer *"conforme o Doc2, secao 9"*. Para isso, as
+secoes precisam estar separadas e identificadas.
+"""
+)
 
 # ==========================================================================
 # 0. Conversao
@@ -28,11 +39,11 @@ docs = D.r_docs()
 col_a, col_b = st.columns([3, 1])
 with col_a:
     if docs:
-        st.caption(f"{len(docs)} documentos em `{D.config.DOCS_MD_DIR}`")
+        st.caption(f"{len(docs)} manuais convertidos, em `{D.config.DOCS_MD_DIR}`")
     else:
         st.warning(
-            "Nenhum Markdown gerado ainda. Clique em **Converter PDFs** para "
-            "extrair os procedimentos de `data/raw/*.pdf`."
+            "Nenhum manual convertido ainda. Clique em **Converter PDFs** para gerar "
+            "os arquivos de texto a partir de `data/raw/*.pdf`."
         )
 with col_b:
     if st.button("Converter PDFs", type="primary", width="stretch"):
@@ -46,7 +57,7 @@ with col_b:
         st.rerun()
 
 if (res := st.session_state.get("conversao")) is not None:
-    with st.expander("Resultado da ultima conversao", expanded=False):
+    with st.expander("Resultado da ultima conversao"):
         st.dataframe(
             res[["documento", "origem", "titulo", "secoes", "ok", "aviso"]],
             hide_index=True,
@@ -58,7 +69,7 @@ if not docs:
 # ==========================================================================
 # 1. Titulos
 # ==========================================================================
-st.header("1. Titulos dos arquivos `.md`")
+st.header("1. Quais manuais temos")
 
 tabela_docs = pd.DataFrame(
     [
@@ -75,10 +86,10 @@ tabela_docs = pd.DataFrame(
 )
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Documentos", len(docs))
-c2.metric("Secoes totais", int(tabela_docs["secoes"].sum()))
-c3.metric("Campos canonicos", len(D.config.CAMPOS_CANONICOS))
-c4.metric("Extraidos por OCR/transcricao", int((tabela_docs["origem_texto"] == "sidecar").sum()))
+c1.metric("Manuais", len(docs))
+c2.metric("Secoes no total", int(tabela_docs["secoes"].sum()))
+c3.metric("Itens esperados", len(D.config.CAMPOS_CANONICOS))
+c4.metric("Precisaram de transcricao", int((tabela_docs["origem_texto"] == "sidecar").sum()))
 
 st.dataframe(
     tabela_docs,
@@ -86,46 +97,63 @@ st.dataframe(
     column_config={
         "titulo": st.column_config.TextColumn("titulo", width="large"),
         "secoes": st.column_config.NumberColumn("secoes", format="%d"),
-        "campos": st.column_config.NumberColumn("campos", format="%d",
-                                                help="de 15 campos canonicos"),
-        "origem_texto": st.column_config.TextColumn(
-            "origem do texto",
-            help="pdf = camada de texto do arquivo; sidecar = transcricao manual "
-                 "de um PDF digitalizado",
+        "campos": st.column_config.NumberColumn(
+            "itens presentes", format="%d",
+            help=f"De {len(D.config.CAMPOS_CANONICOS)} itens esperados num procedimento.",
         ),
-        "caracteres": st.column_config.NumberColumn("caracteres", format="%d"),
+        "origem_texto": st.column_config.TextColumn(
+            "de onde veio o texto",
+            help="pdf = o proprio arquivo tinha texto. sidecar = o PDF era imagem "
+                 "e o conteudo foi transcrito a mao.",
+        ),
+        "caracteres": st.column_config.NumberColumn("tamanho", format="%d"),
     },
 )
 
 if (tabela_docs["origem_texto"] == "sidecar").any():
     nomes = tabela_docs.loc[tabela_docs["origem_texto"] == "sidecar", "arquivo"].tolist()
     st.info(
-        f"**{', '.join(nomes)}** veio de um PDF **digitalizado**, sem camada de texto — "
-        "17 paginas de imagem. `pypdf` extrai 52 caracteres dele, todos de cabecalho. "
-        "O conteudo foi transcrito para `data/raw/Doc1.txt` e o conversor usa esse "
-        "sidecar quando o PDF nao tem texto. A origem fica registrada no front matter "
-        "de cada `.md`, para ninguem confundir com extracao automatica."
+        f"""
+**{', '.join(nomes)} veio escaneado.**
+
+Sao 17 paginas de imagem, sem texto de verdade dentro — o computador nao consegue
+copiar nada dali (extrai 52 caracteres, todos de cabecalho).
+
+A saida normal seria OCR (leitura automatica de imagem), mas isso exige instalar um
+programa a parte, o que quebraria a promessa de "baixar o projeto e rodar". Entao o
+conteudo foi **transcrito** e guardado ao lado do PDF. A origem fica registrada em
+cada arquivo gerado, para ninguem confundir transcricao com extracao automatica.
+
+Como este e justamente o manual de rolamentos — o maior grupo de falhas do arquivo —
+vale conferir a transcricao contra o PDF antes da entrega.
+"""
     )
 
 # ==========================================================================
-# 2. Campos por artigo
+# 2. Campos por manual
 # ==========================================================================
-st.header("2. Campos por artigo")
+st.header("2. O que tem dentro de cada manual")
 
 st.markdown(
-    """
-Um procedimento de manutencao deveria percorrer o fluxo **entender → diagnosticar
-→ corrigir → validar → registrar**. Os 15 campos abaixo sao esse fluxo. Cada secao
-numerada do documento e classificada num campo pelo titulo.
+    f"""
+Um bom procedimento de manutencao percorre sempre o mesmo caminho:
+**entender o problema → diagnosticar → corrigir → validar → registrar**.
 
-Os campos importam alem da conferencia editorial: na Parte 4 eles viram o
-**metadado do chunk**, e a pergunta prescritiva prioriza `correcao` e `validacao`.
-Documento sem esses campos nao gera resposta util, mesmo indexado.
+Transformamos esse caminho numa lista de **{len(D.config.CAMPOS_CANONICOS)} itens**.
+Cada secao numerada do manual e encaixada num deles pelo titulo.
+
+Isso serve para duas coisas:
+
+1. **Conferir se falta algo** no manual — um procedimento sem a secao de correcao
+   nao responde "o que fazer".
+2. **Marcar cada pedaco do texto** quando ele for para o sistema de busca. Na hora
+   de responder "o que devo fazer?", o sistema prioriza os pedacos marcados como
+   *correcao* e *validacao*.
 """
 )
 
 escolhido = st.selectbox(
-    "Documento",
+    "Manual",
     [d["documento"] for d in docs],
     format_func=lambda x: f"{x} — {next(d['titulo'] for d in docs if d['documento'] == x)[:70]}",
 )
@@ -149,44 +177,54 @@ presentes = pd.DataFrame(
 
 col_e, col_d = st.columns([1, 1])
 with col_e:
-    st.metric("Campos presentes", f"{len(doc['campos'])} / {len(rotulos)}")
+    st.metric("Itens presentes", f"{len(doc['campos'])} de {len(rotulos)}")
 with col_d:
-    faltando = len(rotulos) - len(doc["campos"])
-    st.metric("Campos pendentes", faltando, delta_color="inverse")
+    st.metric("Itens em falta", len(rotulos) - len(doc["campos"]), delta_color="inverse")
 
 st.dataframe(
     presentes,
     hide_index=True,
     height=560,
     column_config={
+        "campo": "item esperado",
         "presente": st.column_config.CheckboxColumn("tem?"),
         "secoes": st.column_config.TextColumn("secao(oes)"),
-        "titulos": st.column_config.TextColumn("titulo no documento", width="large"),
+        "titulos": st.column_config.TextColumn("como aparece no manual", width="large"),
     },
 )
 
-with st.expander(f"Todas as {doc['n_secoes']} secoes de {escolhido}"):
+with st.expander(f"Ver as {doc['n_secoes']} secoes de {escolhido}"):
     st.dataframe(
         pd.DataFrame(doc["secoes"])[["numero", "nivel", "titulo", "campo"]],
         hide_index=True,
         height=400,
+        column_config={
+            "numero": "n",
+            "nivel": "nivel",
+            "titulo": st.column_config.TextColumn("titulo", width="large"),
+            "campo": "item",
+        },
     )
 
-with st.expander(f"Markdown gerado — {doc['arquivo'].name}"):
+with st.expander(f"Ver o texto gerado — {doc['arquivo'].name}"):
     st.code(doc["arquivo"].read_text(encoding="utf-8")[:6000], language="markdown")
 
 # ==========================================================================
-# 3. Matriz campo x documento
+# 3. Matriz
 # ==========================================================================
-st.header("3. Que campo esta em que arquivo")
+st.header("3. Quais itens estao em quais manuais")
 
 matriz = D.r_matriz_campos()
 colunas_doc = [d["documento"] for d in docs]
 
-st.caption(
-    "A celula traz o **numero da secao**, nao um 'X'. O numero e o endereco da "
-    "citacao que o LLM tera de produzir na Parte 5 (`Doc2, secao 9`), e o "
-    "guardrail G5 confere se a citacao existe mesmo."
+st.markdown(
+    """
+A tabela cruza os itens esperados (linhas) com os manuais (colunas).
+
+**A celula mostra o numero da secao, nao um "X".** Isso e proposital: o numero e o
+endereco que o sistema tera de citar na resposta — *"Doc2, secao 9"*. Guardar o
+numero desde agora permite conferir depois se a citacao existe mesmo.
+"""
 )
 
 st.dataframe(
@@ -194,15 +232,16 @@ st.dataframe(
     hide_index=True,
     height=560,
     column_config={
-        "campo": st.column_config.TextColumn("campo", width="medium"),
+        "campo": st.column_config.TextColumn("item esperado", width="medium"),
         "documentos_com": st.column_config.NumberColumn(
-            "presente em", format="%d/6", help="Quantos dos 6 documentos tem o campo"
+            "esta em", format=f"%d/{len(docs)}"
         ),
-        "pendente_em": st.column_config.NumberColumn("pendente em", format="%d"),
+        "pendente_em": st.column_config.NumberColumn("falta em", format="%d"),
     },
 )
 
-# Heatmap da mesma matriz — le mais rapido que a tabela.
+st.caption("O mesmo em cores: verde = tem, vermelho = falta.")
+
 longo = matriz.melt(
     id_vars=["campo", "chave"], value_vars=colunas_doc,
     var_name="documento", value_name="secoes",
@@ -220,7 +259,7 @@ st.altair_chart(
             "presente:N",
             title=None,
             scale=alt.Scale(domain=[True, False], range=["#2d6a4f", "#d1495b"]),
-            legend=alt.Legend(labelExpr="datum.label == 'true' ? 'presente' : 'pendente'"),
+            legend=alt.Legend(labelExpr="datum.label == 'true' ? 'tem' : 'falta'"),
         ),
         tooltip=["documento", "campo", alt.Tooltip("secoes:N", title="secao(oes)")],
     )
@@ -228,38 +267,43 @@ st.altair_chart(
     width="stretch",
 )
 
-st.subheader("Pendencias")
+st.subheader("O que esta faltando")
 pendentes = D.r_pendentes()
 
 if pendentes.empty:
-    st.success("Todos os documentos cobrem os 15 campos canonicos.")
+    st.success("Todos os manuais cobrem os itens esperados.")
 else:
     st.warning(
-        f"**{len(pendentes)} pendencias** em {pendentes['documento'].nunique()} documentos."
+        f"**{len(pendentes)} itens em falta**, em {pendentes['documento'].nunique()} manuais."
     )
     st.dataframe(
         pendentes[["documento", "campo_ausente", "titulo"]],
         hide_index=True,
         column_config={
-            "campo_ausente": "campo ausente",
-            "titulo": st.column_config.TextColumn("documento", width="large"),
+            "documento": "manual",
+            "campo_ausente": "item que falta",
+            "titulo": st.column_config.TextColumn("titulo do manual", width="large"),
         },
     )
     st.markdown(
         """
-Nem toda ausencia e defeito. **Indicadores de monitoramento** falta no Doc2
-(desalinhamento) e no Doc3 (desbalanceamento), enquanto Doc1, Doc4, Doc5 e Doc6
-listam quais grandezas acompanhar. Como o Doc1 nomeia exatamente `Kurtosis`,
-`Crest Factor` e `RMS global` — colunas que existem no `banner.csv` — a ausencia
-nos outros dois e uma lacuna real para o cruzamento entre sensor e procedimento,
-nao uma questao de estilo.
+**Nem toda falta e um problema. Uma delas e.**
+
+O item **Indicadores de monitoramento** falta no manual de desalinhamento (Doc2) e no
+de desbalanceamento (Doc3). Os outros quatro manuais tem esse item, e o de rolamentos
+chega a listar `Kurtosis`, `Crest Factor` e `RMS` — que sao exatamente colunas do
+arquivo de sensores.
+
+Ou seja: para rolamento, correia, polia e rotor inclinado existe uma ponte explicita
+entre **o que o sensor mede** e **o que o manual manda acompanhar**. Para
+desalinhamento e desbalanceamento, essa ponte precisa ser deduzida.
 """
     )
 
 # ==========================================================================
-# 4. Diagrama: problema do artigo x coluna `fault`
+# 4. Ligacao com a coluna fault
 # ==========================================================================
-st.header("4. Problema do artigo × coluna `fault` do banner")
+st.header("4. Qual manual atende qual falha")
 
 cobertura = D.r_cobertura()
 familias = D.r_familias_banner()
@@ -274,27 +318,33 @@ n_sem = int((base["cobertura"] == "sem_documento").sum())
 sem_doc_problema = base[(base["cobertura"] == "sem_documento") & (base["e_problema"])]
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Familias documentadas", n_doc)
+c1.metric("Falhas com manual", n_doc)
 c2.metric("Cobertura parcial", n_par)
-c3.metric("Sem documento", n_sem)
-c4.metric("Defeitos sem documento", len(sem_doc_problema), delta_color="inverse")
+c3.metric("Sem manual", n_sem)
+c4.metric("Defeitos sem manual", len(sem_doc_problema), delta_color="inverse")
 
 st.markdown(
     """
-O diagrama liga **cada procedimento** (esquerda) a **cada familia de `fault`**
-(direita). O tamanho do circulo da familia e proporcional ao numero de leituras
-no `banner.csv`.
+O desenho abaixo liga cada **manual** (esquerda) as **falhas que ele atende**
+(direita). O tamanho do circulo e proporcional ao numero de leituras daquela falha
+no arquivo de sensores.
 
-Esta ligacao e a espinha do sistema: pelo principio 1 do projeto, numero nunca e
-comparado com texto. O evento resolve para um rotulo, o rotulo resolve para uma
-familia, e a familia resolve para um documento — por `SELECT`, nunca por
-similaridade semantica.
+### Por que essa ligacao e feita a mao
+
+Poderiamos deixar o computador procurar o manual mais parecido com a falha. O
+problema e que **uma busca por semelhanca sempre devolve alguma coisa** — mesmo
+quando nao existe manual nenhum para aquele defeito, ela devolveria o "menos
+diferente", e o sistema responderia com confianca sobre algo que nao tem base.
+
+Por isso a ligacao e uma **lista fixa, escrita a mao** e guardada em
+`data/fault_map.yaml`. Quando a falha nao esta na lista, o sistema **recusa** em vez
+de improvisar.
 """
 )
 
-# --- montagem do diagrama bipartido ---------------------------------------
-# Altair nao tem layout de grafo. Calculamos as coordenadas na mao: documentos
-# numa coluna a esquerda, familias a direita, e uma linha por par.
+# --- diagrama --------------------------------------------------------------
+# Altair nao tem layout de grafo: calculamos as coordenadas na mao, documentos
+# numa coluna a esquerda e familias a direita, com uma linha por par.
 CORES = {"documentado": "#2d6a4f", "parcial": "#e2a03f", "sem_documento": "#d1495b"}
 
 esq = (
@@ -342,7 +392,8 @@ pontos_doc = (
     alt.Chart(esq)
     .mark_point(size=260, filled=True, color="#34495e")
     .encode(x="x:Q", y="y:Q",
-            tooltip=[alt.Tooltip("documento:N"), alt.Tooltip("titulo_documento:N", title="titulo")])
+            tooltip=[alt.Tooltip("documento:N"),
+                     alt.Tooltip("titulo_documento:N", title="titulo")])
 )
 
 texto_doc = (
@@ -360,7 +411,7 @@ pontos_fam = (
         size=alt.Size("n_leituras:Q", scale=alt.Scale(range=[60, 900]), legend=None),
         color=alt.Color("cobertura:N",
                         scale=alt.Scale(domain=list(CORES), range=list(CORES.values())),
-                        legend=alt.Legend(title="cobertura", orient="bottom")),
+                        legend=alt.Legend(title="situacao", orient="bottom")),
         tooltip=["familia", "cobertura", "documento", "n_rotulos", "n_leituras"],
     )
 )
@@ -391,43 +442,63 @@ st.dataframe(
     hide_index=True,
     height=420,
     column_config={
+        "familia": "falha",
+        "cobertura": "situacao",
+        "documento": "manual",
         "titulo_documento": st.column_config.TextColumn("titulo", width="large"),
-        "n_rotulos": st.column_config.NumberColumn("rotulos", format="%d"),
+        "n_rotulos": st.column_config.NumberColumn("nomes", format="%d"),
         "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
         "e_problema": st.column_config.CheckboxColumn("e defeito?"),
         "g3_libera": st.column_config.CheckboxColumn(
-            "G3 libera?", help="Se falso, o fluxo prescritivo para antes de chamar o LLM"
+            "pode prescrever?",
+            help="Se nao, o sistema para antes de consultar o modelo de linguagem."
         ),
     },
 )
 
-st.subheader("Leitura do diagrama")
+st.subheader("Lendo o desenho")
 
 lista_sem = ", ".join(f"`{f}`" for f in sem_doc_problema["familia"])
 leituras_sem = int(sem_doc_problema["n_leituras"].sum())
 
 st.error(
-    f"**{len(sem_doc_problema)} familias de defeito nao tem procedimento: {lista_sem}.** "
-    f"Somam {leituras_sem:,} leituras no banner.csv. ".replace(",", ".")
-    + "Para elas o guardrail **G3** encerra o fluxo com a mensagem padronizada "
-    "*'Sem documentacao — registre um documento'*, sem chamar o LLM. Nao e falha "
-    "do sistema: e o comportamento correto. Inventar procedimento a partir do "
-    "conhecimento do modelo seria pior que recusar."
+    f"""
+**{len(sem_doc_problema)} defeitos nao tem manual: {lista_sem}.**
+
+Sao {leituras_sem:,} leituras no arquivo — dados existem, procedimento nao.
+
+Para esses casos o sistema vai responder *"Sem documentacao — registre um
+documento"* e **nao** vai consultar o modelo de linguagem.
+
+Isso e o comportamento correto, nao uma falha. Um modelo de linguagem sabe falar
+sobre ventoinha e falta de fase por conhecimento geral, e produziria uma resposta
+convincente. Mas essa resposta nao seria o procedimento **desta empresa**, e nao
+haveria fonte para citar. Recusar e melhor que inventar.
+""".replace(",", ".")
 )
 
 st.warning(
-    "**`eccentric_rotor` tem cobertura apenas parcial (linha tracejada).** A secao "
-    "3.1 do Doc5 descreve excentricidade, mas **de polia** — e o rotulo do banner e "
-    "excentricidade **de rotor**. Mesmo fenomeno, componente diferente. Tratamos "
-    "como *parcial* e o G3 **nao** libera: aceitar essa ligacao faria o sistema "
-    "prescrever ajuste de polia para um problema de rotor. A decisao final vai para "
-    "o `fault_map.yaml`, e esta e exatamente a divergencia que o cruzamento entre "
-    "assinatura e documento deveria expor."
+    """
+**`eccentric_rotor` fica no meio do caminho (linha tracejada).**
+
+O manual de polias (Doc5) tem uma secao sobre excentricidade. Mas e excentricidade
+**de polia**, e o dado aqui e excentricidade **de rotor**. Mesmo fenomeno fisico,
+peca diferente.
+
+Marcamos como **cobertura parcial** e **nao** liberamos a prescricao. Aceitar essa
+ligacao faria o sistema mandar ajustar a polia quando o problema esta no rotor.
+
+Isso vale a atencao: e a segunda maior familia de falhas do arquivo.
+"""
 )
 
 st.info(
-    "As familias `normal`, `teste`, `acelerando` e `motor_desligado` tambem aparecem "
-    "sem documento, mas por outro motivo: sao **estados**, nao defeitos. O guardrail "
-    "**G2** encerra o fluxo antes do G3 — nao ha acao corretiva para uma maquina que "
-    "esta operando normalmente."
+    """
+**`normal`, `teste`, `acelerando` e `motor_desligado` tambem aparecem sem manual —
+mas por outro motivo.**
+
+Nao sao defeitos, sao estados da maquina. Nao existe procedimento de correcao para
+uma maquina que esta funcionando bem, e o sistema encerra o atendimento antes mesmo
+de procurar manual.
+"""
 )

@@ -25,6 +25,7 @@ from mp.analysis.quality import (
     duplicatas_consecutivas,
     outliers_iqr,
     relatorio_qualidade,
+    timestamps_duplicados,
 )
 from mp.analysis.signatures import (
     assinatura_de_rotulo,
@@ -49,6 +50,7 @@ __all__ = [
     "colunas_redundantes",
     "duplicatas_consecutivas",
     "outliers_iqr",
+    "timestamps_duplicados",
     "relatorio_qualidade",
     "assinaturas_por_rotulo",
     "assinatura_de_rotulo",

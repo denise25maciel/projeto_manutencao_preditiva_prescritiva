@@ -1,6 +1,6 @@
 """Pagina inicial da UI — Parte 0.
 
-Visao geral do dataset e porta de entrada para as duas telas de analise.
+Visao geral do dataset e porta de entrada para as telas de analise.
 Rodar com:  streamlit run ui/app.py
 """
 
@@ -13,8 +13,8 @@ import _dados as D
 
 D.configurar_pagina("Visao geral")
 
-st.title("🔧 Manutencao Prescritiva — Analise Exploratoria")
-st.caption("Parte 0: entender o dado bruto antes de transformar qualquer coisa.")
+st.title("🔧 Manutencao Prescritiva — Analise dos Dados")
+st.caption("Entender o dado antes de mudar qualquer coisa.")
 
 try:
     resumo = D.r_resumo()
@@ -25,37 +25,43 @@ janela = D.r_janela()
 amostragem = D.r_amostragem()
 rotulos = D.r_rotulos()
 
+st.markdown(
+    """
+Esta e a etapa de **exploracao**. Aqui nada e corrigido, filtrado ou apagado:
+so descrevemos o que veio no arquivo. Limpar os dados vem depois, na proxima etapa.
+"""
+)
+
 # --------------------------------------------------------------------------
 # Cabecalho numerico
 # --------------------------------------------------------------------------
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Leituras", f"{resumo['linhas']:,}".replace(",", "."))
 c2.metric("Colunas", resumo["colunas"])
-c3.metric("Rotulos distintos", resumo["rotulos_distintos"])
-c4.metric("Celulas nulas", f"{resumo['celulas_nulas']:,}".replace(",", "."))
-c5.metric("Sessoes estimadas", amostragem["sessoes_estimadas"])
+c3.metric("Tipos de falha", resumo["rotulos_distintos"])
+c4.metric("Campos vazios", f"{resumo['celulas_nulas']:,}".replace(",", "."))
+c5.metric("Sessoes de coleta", amostragem["sessoes_estimadas"])
 
-st.caption(f"Fonte: `{D.caminho_do_csv()}` — arquivo fora do controle de versao.")
+st.caption(f"Arquivo: `{D.caminho_do_csv()}` — fica fora do Git, e dado da empresa.")
 
 st.divider()
 
 # --------------------------------------------------------------------------
-# Leitura rapida: o que ja sabemos
+# Leitura rapida
 # --------------------------------------------------------------------------
-st.subheader("Leitura rapida")
+st.subheader("O que temos")
 
 col_a, col_b = st.columns(2)
 
 with col_a:
     st.markdown(
         f"""
-**Janela de coleta**
+**Quando os dados foram coletados**
 
-- De `{janela['inicio']:%d/%m/%Y %H:%M}` a `{janela['fim']:%d/%m/%Y %H:%M}` UTC
-- {janela['duracao_dias']} dias corridos
-- Intervalo mediano entre leituras: **{amostragem['intervalo_mediano_s']} s**
-  (o esperado era ~2 s — confirmado)
-- {amostragem['pct_na_cadencia']}% das leituras respeitam essa cadencia
+- De {janela['inicio']:%d/%m/%Y} a {janela['fim']:%d/%m/%Y}, ou seja
+  {janela['duracao_dias']:.0f} dias
+- O sensor gravava uma leitura a cada **{amostragem['intervalo_mediano_s']:.0f} segundos**
+- {amostragem['pct_na_cadencia']:.0f}% das leituras seguem esse ritmo
 """
     )
 
@@ -63,35 +69,51 @@ with col_b:
     n_prob = int(rotulos["e_problema"].sum())
     st.markdown(
         f"""
-**Rotulos**
+**O que foi medido**
 
-- {resumo['rotulos_distintos']} valores distintos em `fault`
-- {n_prob} classificados como **defeito**, {resumo['rotulos_distintos'] - n_prob}
-  como **estado** (normal, teste, baseline, motor desligado...)
-- O maior rotulo cobre {rotulos.iloc[0]['pct']}% das linhas
+- A coluna `fault` tem {resumo['rotulos_distintos']} valores diferentes
+- {n_prob} sao **defeitos**; {resumo['rotulos_distintos'] - n_prob} sao apenas
+  **estados da maquina** (normal, teste, motor desligado...)
+- O valor mais comum sozinho responde por {rotulos.iloc[0]['pct']:.0f}% das linhas
 """
     )
 
-# Achados que contrariam a expectativa inicial do GUIA.md. Ficam em destaque
-# porque mudam decisao de engenharia, nao sao curiosidade.
-st.markdown("**Tres achados que contrariam a suposicao inicial:**")
+st.markdown("### Tres coisas que esperavamos e nao se confirmaram")
 
 st.warning(
-    f"**`created_at` nao esta em ordem cronologica.** O arquivo tem "
-    f"{amostragem['cortes']} cortes acima de 60 s e saltos negativos de dezenas de "
-    "dias — sao sessoes gravadas em epocas diferentes e concatenadas fora de ordem. "
-    "Qualquer janela deslizante (a mediana movel da Parte 3) precisa ordenar antes."
+    f"""
+**1. Os dados nao estao em ordem de data.**
+
+Abrimos o arquivo esperando uma linha do tempo continua. Nao e. Ele junta
+**{amostragem['sessoes_estimadas']} gravacoes curtas** feitas em dias diferentes, e
+elas nao estao na ordem certa: uma linha pode ser de junho e a seguinte, de maio.
+
+*Por que importa:* qualquer calculo que dependa de "a leitura anterior" precisa
+ordenar por data antes, senao compara coisas sem relacao.
+"""
 )
 st.warning(
-    "**`z_peak_vel_comp_freq_hz` e `x_peak_vel_comp_freq_hz` nao sao constantes em "
-    "61 Hz.** Tem 79 e 50 valores distintos. 61 Hz e a moda (60% e 49% das linhas), "
-    "nao o valor unico — as colunas carregam informacao e nao devem ser descartadas."
+    """
+**2. As colunas de frequencia nao sao fixas em 61 Hz.**
+
+Suspeitavamos que `z_peak_vel_comp_freq_hz` e `x_peak_vel_comp_freq_hz` tivessem
+sempre o mesmo valor — se fosse assim, seriam inuteis e poderiam ser descartadas.
+Elas tem 79 e 50 valores diferentes. 61 Hz e apenas o valor mais comum.
+
+*Por que importa:* as colunas tem informacao e ficam. A frequencia muda justamente
+em alguns defeitos.
+"""
 )
 st.warning(
-    f"**{resumo['rotulos_distintos']} rotulos, nao ~10.** Ha erros de digitacao "
-    "(`mortor_desligado_novo`, `normla_carga_3_3`, `cockecocked_adxl_0`) e sufixos de "
-    "sessao (`_2`, `_pos_2`, `_carga`, `_adxl_0`, `new_*`) que multiplicam a mesma "
-    "familia. Consolidar isso e a Parte 1."
+    f"""
+**3. Sao {resumo['rotulos_distintos']} nomes de falha, nao uns 10.**
+
+A maior parte e o mesmo defeito escrito de formas diferentes. Ha erros de digitacao
+(`mortor_desligado_novo`, `normla_carga_3_3`) e sufixos que so indicam a sessao de
+coleta (`_2`, `_pos_2`, `_carga`, `new_`).
+
+*Por que importa:* juntar esses nomes em grupos e o primeiro passo da proxima etapa.
+"""
 )
 
 st.divider()
@@ -99,16 +121,16 @@ st.divider()
 # --------------------------------------------------------------------------
 # Distribuicao dos rotulos
 # --------------------------------------------------------------------------
-st.subheader("Distribuicao das leituras por rotulo")
+st.subheader("Quantas leituras cada tipo de falha tem")
 
-top = st.slider("Quantos rotulos mostrar", 5, 60, 25, step=5)
+top = st.slider("Quantos mostrar", 5, 60, 25, step=5)
 recorte = rotulos.head(top)
 
-grafico = (
+st.altair_chart(
     alt.Chart(recorte)
     .mark_bar()
     .encode(
-        x=alt.X("n_leituras:Q", title="leituras"),
+        x=alt.X("n_leituras:Q", title="numero de leituras"),
         y=alt.Y("fault:N", sort="-x", title=None),
         color=alt.Color(
             "e_problema:N",
@@ -117,24 +139,33 @@ grafico = (
         ),
         tooltip=["fault", "n_leituras", "pct", "e_problema"],
     )
-    .properties(height=max(240, 18 * len(recorte)))
+    .properties(height=max(240, 18 * len(recorte))),
+    width="stretch",
 )
-st.altair_chart(grafico, width="stretch")
 
 st.info(
-    "A barra conta **linhas**, nao ocorrencias. Um rotulo com 13.000 leituras "
-    "coletadas ao longo de 34 h e uma sessao continua, nao 13.000 falhas. "
-    "Colapsar isso em episodios e o primeiro item da Parte 1."
+    """
+**Cuidado ao ler este grafico.** A barra conta **linhas do arquivo**, nao quantas
+vezes o defeito aconteceu.
+
+Exemplo: `rolamento_inner` tem 13 mil linhas. Mas elas foram gravadas ao longo de
+34 horas seguidas — e **uma** falha sendo medida sem parar, nao 13 mil falhas.
+
+Agrupar leituras seguidas num unico evento e tarefa da proxima etapa.
+"""
 )
 
 st.divider()
 st.markdown(
     """
-### Para onde ir
+### As outras telas
 
-- **Analise de Falhas** — valores unicos de `fault` e a assinatura de vibracao de cada um
-- **Qualidade dos Dados** — como o dado chegou: nulos, redundancias, duplicatas e outliers
+Use o menu a esquerda.
 
-Use o menu na barra lateral.
+- **Analise de Falhas** — escolha um ou mais tipos de falha e veja como cada um se
+  comporta ao longo do tempo e o que os diferencia
+- **Qualidade dos Dados** — como o arquivo chegou: campos vazios, colunas repetidas,
+  leituras duplicadas e valores fora do normal
+- **Documentos** — os 6 manuais de procedimento e quais falhas cada um cobre
 """
 )

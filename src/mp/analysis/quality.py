@@ -112,6 +112,60 @@ def duplicatas_consecutivas(df: pd.DataFrame) -> dict:
     }
 
 
+def timestamps_duplicados(df: pd.DataFrame) -> dict:
+    """Linhas que compartilham exatamente o mesmo `created_at`.
+
+    Diferente de `duplicatas_consecutivas`, que procura MEDIDAS repetidas: aqui
+    o que se repete e o INSTANTE. Sao problemas distintos e a distincao importa.
+
+    Duas leituras no mesmo instante podem ser:
+
+    - **o mesmo registro gravado duas vezes** — as medidas tambem coincidem;
+    - **leituras reais com o instante errado** — as medidas variam, e entao o
+      dado de vibracao serve, mas o carimbo de tempo nao.
+
+    O segundo caso e o grave: as leituras entram nas contas de assinatura e de
+    similaridade normalmente, mas nao podem ancorar nada temporal — episodio,
+    frequencia de ocorrencia, janela deslizante. Por isso o retorno separa os
+    dois com `medidas_identicas`.
+    """
+    tempo, ident, rot = config.COLUNA_TEMPO, config.COLUNA_ID, config.COLUNA_ROTULO
+
+    dup = df[df[tempo].duplicated(keep=False)].sort_values([tempo, ident])
+    if dup.empty:
+        return {"total": 0, "instantes": 0,
+                "resumo": pd.DataFrame(), "linhas": dup}
+
+    medidas = [c for c in df.columns if c not in (ident, tempo)]
+    g = dup.groupby(tempo, sort=True)
+
+    resumo = pd.DataFrame(
+        {
+            "linhas": g.size(),
+            "rotulos": g[rot].agg(lambda s: ", ".join(sorted(set(s.dropna().astype(str))))),
+            "id_min": g[ident].min(),
+            "id_max": g[ident].max(),
+            # Todas as colunas de medida com um unico valor => copia do registro.
+            "medidas_identicas": g[medidas].nunique().max(axis=1) == 1,
+            # Quantas linhas do bloco repetem exatamente outra linha do bloco.
+            "linhas_repetidas": g[medidas].apply(
+                lambda bloco: int(bloco.duplicated().sum())
+            ),
+        }
+    ).reset_index()
+
+    # Se um bloco de N linhas ocupa exatamente N ids consecutivos, ele entrou no
+    # arquivo de uma vez — carga em lote, nao coleta espalhada no tempo.
+    resumo["ids_contiguos"] = (resumo["id_max"] - resumo["id_min"] + 1) == resumo["linhas"]
+
+    return {
+        "total": int(len(dup)),
+        "instantes": int(resumo.shape[0]),
+        "resumo": resumo,
+        "linhas": dup,
+    }
+
+
 def outliers_iqr(
     df: pd.DataFrame,
     colunas: list[str] | None = None,
@@ -196,5 +250,6 @@ def relatorio_qualidade(df: pd.DataFrame) -> dict:
         "constantes": colunas_constantes(df),
         "redundantes": colunas_redundantes(df),
         "duplicatas": duplicatas_consecutivas(df),
+        "tempos_duplicados": timestamps_duplicados(df),
         "outliers": outliers_iqr(df),
     }
