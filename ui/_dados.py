@@ -28,8 +28,12 @@ from mp.ingestion import (  # noqa: E402
     campos_pendentes,
     carregar_markdowns,
     cobertura_por_familia,
+    construir_eventos,
     converter_todos,
+    diagnostico_eventos,
     matriz_campos,
+    resumo_por_rotulo,
+    validar_eventos,
 )
 from mp.analysis import (  # noqa: E402
     analise_intervalos,
@@ -198,6 +202,34 @@ def r_serie_temporal(rotulo: str, colunas: tuple[str, ...], max_pontos: int | No
 def r_ordenado(rotulo: str):
     """Leituras do rotulo em ordem cronologica, com sessao e delta."""
     return ordenar_por_tempo(dados(), rotulo)
+
+
+# --- eventos ----------------------------------------------------------------
+
+
+@st.cache_data(**CACHE)
+def r_eventos(limite_intervalo_s: float | None = None):
+    """`(leituras com a coluna evento, tabela de eventos)`."""
+    return construir_eventos(dados(), limite_intervalo_s=limite_intervalo_s)
+
+
+@st.cache_data(**CACHE)
+def r_validacao_eventos(limite_intervalo_s: float | None = None):
+    leituras, eventos = r_eventos(limite_intervalo_s)
+    return validar_eventos(leituras, eventos, dados())
+
+
+@st.cache_data(**CACHE)
+def r_resumo_eventos(limite_intervalo_s: float | None = None):
+    _, eventos = r_eventos(limite_intervalo_s)
+    return resumo_por_rotulo(eventos)
+
+
+@st.cache_data(**CACHE)
+def r_diagnostico_eventos(limite_intervalo_s: float | None = None,
+                          limite_alerta_s: float = 60.0):
+    leituras, eventos = r_eventos(limite_intervalo_s)
+    return diagnostico_eventos(leituras, eventos, limite_alerta_s=limite_alerta_s)
 
 
 # --- documentos -------------------------------------------------------------

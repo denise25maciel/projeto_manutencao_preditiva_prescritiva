@@ -9,7 +9,7 @@ import re
 
 import pandas as pd
 
-from mp import config
+from mp import config, segmentos
 
 
 def resumo_geral(df: pd.DataFrame) -> dict:
@@ -160,9 +160,9 @@ def ordenar_por_tempo(df: pd.DataFrame, rotulo: str | None = None) -> pd.DataFra
         return sub.assign(sessao=pd.Series(dtype=int), delta_s=pd.Series(dtype=float))
 
     gap = sub[tempo].diff().dt.total_seconds()
-    # O primeiro gap e NaN; `NaN > x` e False, entao a primeira linha cai na
-    # sessao 0 sem tratamento especial.
-    sub["sessao"] = (gap > config.GAP_NOVA_SESSAO_S).cumsum().astype(int)
+    corte = segmentos.passou_intervalo(sub[tempo], config.GAP_NOVA_SESSAO_S)
+    # `- 1` porque `numerar_grupos` comeca em 1 e a sessao e contada a partir de 0.
+    sub["sessao"] = segmentos.numerar_grupos(corte) - 1
     sub["delta_s"] = gap.where(gap <= config.GAP_NOVA_SESSAO_S)
     return sub
 
@@ -251,14 +251,18 @@ def analise_intervalos(df: pd.DataFrame, cortes=None) -> dict:
     # Conta episodios para varios cortes. Nao e a implementacao da Parte 1 —
     # aqui so precisamos do NUMERO, para mostrar onde ele fica estavel.
     cortes = list(cortes) if cortes else [2.5, 5, 8, 10, 12, 15, 20, 30, 45, 60, 120, 300]
-    muda_rotulo = (ordenado[rot] != ordenado[rot].shift()).fillna(True).to_numpy(bool)
-    g = gap.fillna(0).to_numpy()
+    muda_rotulo = segmentos.mudou_valor(ordenado[rot])
 
     sensibilidade = pd.DataFrame(
         {
             "corte_s": cortes,
             "episodios": [
-                int(pd.unique(_acumula(muda_rotulo | (g > c))).size) for c in cortes
+                int(
+                    segmentos.numerar_grupos(
+                        muda_rotulo, segmentos.passou_intervalo(ordenado[tempo], c)
+                    )[-1]
+                )
+                for c in cortes
             ],
         }
     )
@@ -271,17 +275,6 @@ def analise_intervalos(df: pd.DataFrame, cortes=None) -> dict:
         "sensibilidade": sensibilidade,
         "intervalos": dentro,
     }
-
-
-def _acumula(mascara):
-    """Soma cumulativa de uma mascara booleana, virando id de grupo.
-
-    Existe porque no pandas 3 os booleanos vem do Arrow e nao aceitam `cumsum`;
-    a conta e feita em numpy.
-    """
-    import numpy as np
-
-    return np.cumsum(np.asarray(mascara, dtype=bool))
 
 
 def serie_temporal(

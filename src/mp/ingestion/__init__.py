@@ -1,9 +1,17 @@
-"""Ingestao de insumos brutos.
+"""Ingestao de insumos brutos — o que TRANSFORMA o dado.
 
-`documents` converte os PDFs de procedimento em Markdown com secoes numeradas —
-o formato que a Parte 4 vai fatiar em chunks.
+- `sensors`   — agrupa as leituras de vibracao em eventos
+- `documents` — converte os PDFs de procedimento em Markdown com secoes numeradas
+
+Contraste com `analysis/`, que so descreve e nunca altera nada.
 """
 
+from mp.ingestion.sensors import (
+    construir_eventos,
+    diagnostico_eventos,
+    resumo_por_rotulo,
+    validar_eventos,
+)
 from mp.ingestion.documents import (
     campos_pendentes,
     carregar_markdowns,
@@ -16,6 +24,10 @@ from mp.ingestion.documents import (
 )
 
 __all__ = [
+    "construir_eventos",
+    "diagnostico_eventos",
+    "validar_eventos",
+    "resumo_por_rotulo",
     "extrair_texto",
     "separar_secoes",
     "pdf_para_markdown",

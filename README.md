@@ -124,6 +124,7 @@ Abre em `http://localhost:8501`. Três telas no menu lateral:
 | **Análise de Falhas** | Valores únicos de `fault` com busca e filtro. Ao selecionar um rótulo: assinatura de vibração com quartis e CV, o que o distingue do resto do dataset, distribuição de cada feature, **série temporal por coluna** e outliers dentro da classe |
 | **Qualidade dos Dados** | Como o dado chegou: nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
 | **Documentos** | Os 6 procedimentos convertidos em Markdown: títulos, campos de cada artigo, matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
+| **Eventos** | As 166.796 linhas agrupadas em ocorrências contáveis, com as 5 validações do agrupamento e o custo da regra escolhida |
 
 Na primeira visita à tela **Documentos**, clique em **Converter PDFs** para gerar os
 `.md` a partir de `data/raw/*.pdf`. Eles são escritos em
@@ -187,8 +188,9 @@ reimplementam nada. Nada em produção depende deles.
 ├── notebooks/01_eda.ipynb
 ├── src/mp/
 │   ├── config.py             # todo limiar e caminho
-│   ├── analysis/             # loader, profiling, quality, signatures
-│   ├── ingestion/            # documents: PDF -> Markdown
+│   ├── segmentos.py          # primitiva: agrupar linhas consecutivas
+│   ├── analysis/             # DESCREVE: loader, profiling, quality, signatures
+│   ├── ingestion/            # TRANSFORMA: sensors (eventos), documents (PDF->MD)
 │   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
 │   ├── app.py                # streamlit run ui/app.py
