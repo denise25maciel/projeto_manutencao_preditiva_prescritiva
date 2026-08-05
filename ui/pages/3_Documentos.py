@@ -130,89 +130,9 @@ vale conferir a transcricao contra o PDF antes da entrega.
     )
 
 # ==========================================================================
-# 2. Campos por manual
+# 2. Matriz
 # ==========================================================================
-st.header("2. O que tem dentro de cada manual")
-
-st.markdown(
-    f"""
-Um bom procedimento de manutencao percorre sempre o mesmo caminho:
-**entender o problema → diagnosticar → corrigir → validar → registrar**.
-
-Transformamos esse caminho numa lista de **{len(D.config.CAMPOS_CANONICOS)} itens**.
-Cada secao numerada do manual e encaixada num deles pelo titulo.
-
-Isso serve para duas coisas:
-
-1. **Conferir se falta algo** no manual — um procedimento sem a secao de correcao
-   nao responde "o que fazer".
-2. **Marcar cada pedaco do texto** quando ele for para o sistema de busca. Na hora
-   de responder "o que devo fazer?", o sistema prioriza os pedacos marcados como
-   *correcao* e *validacao*.
-"""
-)
-
-escolhido = st.selectbox(
-    "Manual",
-    [d["documento"] for d in docs],
-    format_func=lambda x: f"{x} — {next(d['titulo'] for d in docs if d['documento'] == x)[:70]}",
-)
-doc = next(d for d in docs if d["documento"] == escolhido)
-
-rotulos = {c: r for c, r, _ in D.config.CAMPOS_CANONICOS}
-
-presentes = pd.DataFrame(
-    [
-        {
-            "campo": rotulos[chave],
-            "secoes": ", ".join(s["numero"] for s in doc["secoes"] if s["campo"] == chave),
-            "titulos": " | ".join(
-                s["titulo"] for s in doc["secoes"] if s["campo"] == chave
-            ),
-            "presente": chave in doc["campos"],
-        }
-        for chave in rotulos
-    ]
-)
-
-col_e, col_d = st.columns([1, 1])
-with col_e:
-    st.metric("Itens presentes", f"{len(doc['campos'])} de {len(rotulos)}")
-with col_d:
-    st.metric("Itens em falta", len(rotulos) - len(doc["campos"]), delta_color="inverse")
-
-st.dataframe(
-    presentes,
-    hide_index=True,
-    height=560,
-    column_config={
-        "campo": "item esperado",
-        "presente": st.column_config.CheckboxColumn("tem?"),
-        "secoes": st.column_config.TextColumn("secao(oes)"),
-        "titulos": st.column_config.TextColumn("como aparece no manual", width="large"),
-    },
-)
-
-with st.expander(f"Ver as {doc['n_secoes']} secoes de {escolhido}"):
-    st.dataframe(
-        pd.DataFrame(doc["secoes"])[["numero", "nivel", "titulo", "campo"]],
-        hide_index=True,
-        height=400,
-        column_config={
-            "numero": "n",
-            "nivel": "nivel",
-            "titulo": st.column_config.TextColumn("titulo", width="large"),
-            "campo": "item",
-        },
-    )
-
-with st.expander(f"Ver o texto gerado — {doc['arquivo'].name}"):
-    st.code(doc["arquivo"].read_text(encoding="utf-8")[:6000], language="markdown")
-
-# ==========================================================================
-# 3. Matriz
-# ==========================================================================
-st.header("3. Quais itens estao em quais manuais")
+st.header("2. Quais itens estao em quais manuais")
 
 matriz = D.r_matriz_campos()
 colunas_doc = [d["documento"] for d in docs]
@@ -227,8 +147,22 @@ numero desde agora permite conferir depois se a citacao existe mesmo.
 """
 )
 
+# Verde = tem, vermelho = falta — as MESMAS cores do mapa logo abaixo. Antes a
+# tabela vinha sem cor nenhuma e o mapa colorido vinha depois, entao o olho
+# tinha de casar duas leituras diferentes da mesma informacao. Agora as duas
+# falam a mesma lingua e a tabela ja se le sozinha.
+VERDE, VERMELHO = "#2d6a4f", "#d1495b"
+
+
+def _cor_da_celula(valor) -> str:
+    """Fundo da celula conforme o item exista ou nao naquele manual."""
+    tem = bool(str(valor).strip())
+    return f"background-color: {VERDE if tem else VERMELHO}; color: white;"
+
+
 st.dataframe(
-    matriz[["campo"] + colunas_doc + ["documentos_com", "pendente_em"]],
+    matriz[["campo"] + colunas_doc + ["documentos_com", "pendente_em"]]
+    .style.map(_cor_da_celula, subset=colunas_doc),
     hide_index=True,
     height=560,
     column_config={
@@ -240,7 +174,10 @@ st.dataframe(
     },
 )
 
-st.caption("O mesmo em cores: verde = tem, vermelho = falta.")
+st.caption(
+    "Verde = tem, vermelho = falta. A celula mostra o numero da secao, nao um "
+    "'X' — o numero e o endereco que a resposta tera de citar."
+)
 
 longo = matriz.melt(
     id_vars=["campo", "chave"], value_vars=colunas_doc,
@@ -301,9 +238,9 @@ desalinhamento e desbalanceamento, essa ponte precisa ser deduzida.
     )
 
 # ==========================================================================
-# 4. Ligacao com a coluna fault
+# 3. Ligacao com a coluna fault
 # ==========================================================================
-st.header("4. Qual manual atende qual falha")
+st.header("3. Qual manual atende qual falha")
 
 cobertura = D.r_cobertura()
 familias = D.r_familias_banner()

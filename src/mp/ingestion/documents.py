@@ -31,35 +31,61 @@ def _sem_acento(texto: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
-def extrair_texto(caminho_pdf: Path) -> tuple[str, str]:
-    """Extrai o texto de um PDF.
+def extrair_texto(caminho_pdf: Path) -> tuple[str, str, list[int | None]]:
+    """Extrai o texto de um PDF, sabendo de que pagina veio cada linha.
 
-    Devolve `(texto, origem)`, onde origem e:
+    Devolve `(texto, origem, paginas)`, onde `paginas[i]` e o numero da pagina
+    (1-based) da linha `i` de `texto.splitlines()`, ou `None` quando nao da para
+    saber. Origem e:
+
       - `pdf`      — camada de texto do proprio PDF
       - `sidecar`  — arquivo `.txt` ao lado, usado quando o PDF e digitalizado
       - `vazio`    — sem texto e sem sidecar; precisa de OCR
+
+    **Por que rastrear a pagina.** A resposta cita "Doc2, secao 9.2", que e o
+    endereco logico. Mas quem esta com o manual impresso na mao procura por
+    pagina. Guardar as duas coisas custa uma lista de inteiros e evita que o
+    numero da pagina precise ser adivinhado depois — ou, pior, gerado pelo
+    modelo de linguagem.
 
     **Por que o sidecar existe:** um dos procedimentos veio escaneado, so com
     imagens e sem camada de texto. Rodar OCR exigiria o binario do Tesseract,
     que nao e resolvivel por `pip` e quebraria o "clone limpo". Em vez disso o
     conversor aceita uma transcricao manual em `data/raw/<nome>.txt`, e marca a
     origem no front matter para ninguem confundir com extracao automatica.
+    Transcricao manual **nao tem pagina**: ali as paginas saem todas `None`, e o
+    sistema diz "pagina nao disponivel" em vez de inventar uma.
     """
     from pypdf import PdfReader
 
     reader = PdfReader(str(caminho_pdf))
-    texto = "\n".join((p.extract_text() or "") for p in reader.pages)
+
+    blocos, paginas = [], []
+    for numero, pagina in enumerate(reader.pages, start=1):
+        conteudo = pagina.extract_text() or ""
+        blocos.append(conteudo)
+        paginas.extend([numero] * len(conteudo.splitlines()))
+        # O "\n" que emenda uma pagina na seguinte tambem vira uma linha.
+        if numero < len(reader.pages):
+            paginas.append(numero)
+
+    texto = "\n".join(blocos)
 
     # Um PDF de procedimento tem milhares de caracteres. Menos que isso e
     # residuo de cabecalho: o conteudo esta em imagem.
     if len(texto.strip()) >= 500:
-        return texto, "pdf"
+        # A contagem acima pode divergir por uma linha em PDFs que terminam sem
+        # quebra; alinhamos pelo texto final, que e o que sera fatiado.
+        n = len(texto.splitlines())
+        paginas = (paginas + [paginas[-1] if paginas else None] * n)[:n]
+        return texto, "pdf", paginas
 
     sidecar = caminho_pdf.with_suffix(".txt")
     if sidecar.exists():
-        return sidecar.read_text(encoding="utf-8"), "sidecar"
+        conteudo = sidecar.read_text(encoding="utf-8")
+        return conteudo, "sidecar", [None] * len(conteudo.splitlines())
 
-    return "", "vazio"
+    return "", "vazio", []
 
 
 # --------------------------------------------------------------------------
@@ -77,10 +103,23 @@ class Secao:
     nivel: int
     campo: str | None = None
     linhas: list[str] = field(default_factory=list)
+    # Pagina do PDF onde a secao comeca e onde termina. `None` quando o texto
+    # veio de transcricao manual (sidecar), que nao tem paginacao.
+    pagina_inicio: int | None = None
+    pagina_fim: int | None = None
 
     @property
     def conteudo(self) -> str:
         return "\n".join(self.linhas).strip()
+
+    @property
+    def paginas(self) -> str:
+        """Como a pagina aparece na citacao: "4", "4-5" ou vazio."""
+        if self.pagina_inicio is None:
+            return ""
+        if self.pagina_fim and self.pagina_fim != self.pagina_inicio:
+            return f"{self.pagina_inicio}-{self.pagina_fim}"
+        return str(self.pagina_inicio)
 
 
 def _e_cabecalho(numero: str, titulo: str, proximo_topo: int, topo_atual: int) -> bool:
@@ -120,19 +159,28 @@ def classificar_campo(titulo: str) -> str | None:
     return None
 
 
-def separar_secoes(texto: str) -> tuple[str, list[Secao]]:
+def separar_secoes(
+    texto: str, paginas: list[int | None] | None = None
+) -> tuple[str, list[Secao]]:
     """Quebra o texto em `(titulo_do_documento, secoes)`.
 
     O titulo sao as linhas antes da secao 1 — nos PDFs ele vem quebrado em
     duas ou tres linhas pela largura da pagina, entao juntamos.
+
+    `paginas` e a lista devolvida por `extrair_texto`, paralela as linhas. Quando
+    presente, cada secao registra em que pagina comeca e termina.
     """
     linhas = [ln.rstrip() for ln in texto.splitlines()]
+    paginas = paginas or [None] * len(linhas)
+
+    def pagina_de(i: int) -> int | None:
+        return paginas[i] if i < len(paginas) else None
 
     secoes: list[Secao] = []
     cabecalho_doc: list[str] = []
     proximo_topo, topo_atual = 1, 0
 
-    for ln in linhas:
+    for i, ln in enumerate(linhas):
         limpa = ln.strip()
         if not limpa:
             if secoes:
@@ -146,14 +194,19 @@ def separar_secoes(texto: str) -> tuple[str, list[Secao]]:
             if nivel == 1:
                 topo_atual = int(numero)
                 proximo_topo = topo_atual + 1
+            pag = pagina_de(i)
             secoes.append(
                 Secao(numero=numero, titulo=titulo, nivel=nivel,
-                      campo=classificar_campo(titulo))
+                      campo=classificar_campo(titulo),
+                      pagina_inicio=pag, pagina_fim=pag)
             )
             continue
 
         if secoes:
             secoes[-1].linhas.append(limpa)
+            # A secao se estende ate a ultima linha de conteudo que ela recebeu.
+            if (pag := pagina_de(i)) is not None:
+                secoes[-1].pagina_fim = pag
         else:
             cabecalho_doc.append(limpa)
 
@@ -216,7 +269,7 @@ def pdf_para_markdown(caminho_pdf: Path, destino: Path | None = None) -> dict:
     destino = Path(destino) if destino else config.DOCS_MD_DIR
     destino.mkdir(parents=True, exist_ok=True)
 
-    texto, origem = extrair_texto(caminho_pdf)
+    texto, origem, paginas = extrair_texto(caminho_pdf)
     slug = caminho_pdf.stem
     arquivo_md = destino / f"{slug}.md"
 
@@ -228,7 +281,7 @@ def pdf_para_markdown(caminho_pdf: Path, destino: Path | None = None) -> dict:
                      f"de uma transcricao em {caminho_pdf.with_suffix('.txt').name}",
         }
 
-    titulo, secoes = separar_secoes(texto)
+    titulo, secoes = separar_secoes(texto, paginas)
     campos = sorted({s.campo for s in secoes if s.campo})
 
     linhas = [
@@ -246,7 +299,13 @@ def pdf_para_markdown(caminho_pdf: Path, destino: Path | None = None) -> dict:
 
     for s in secoes:
         marcador = "#" * min(s.nivel + 1, 6)
-        rotulo = f" <!-- campo: {s.campo} -->" if s.campo else ""
+        # Metadados no comentario HTML: invisiveis na leitura, mas reparseaveis.
+        marcas = []
+        if s.campo:
+            marcas.append(f"campo: {s.campo}")
+        if s.paginas:
+            marcas.append(f"pagina: {s.paginas}")
+        rotulo = f" <!-- {' | '.join(marcas)} -->" if marcas else ""
         linhas.append(f"{marcador} {s.numero}. {s.titulo}{rotulo}")
         linhas.append("")
         linhas.extend(_corpo_markdown(s))
@@ -276,10 +335,26 @@ def converter_todos(origem: Path | None = None, destino: Path | None = None) -> 
 # --------------------------------------------------------------------------
 
 _FRONT = re.compile(r"^---\n(.*?)\n---\n", re.S)
+# O comentario final carrega campo e/ou pagina, em qualquer combinacao:
+#   <!-- campo: correcao | pagina: 4 -->   <!-- pagina: 2 -->   (ou nenhum)
 _TITULO_SECAO = re.compile(
-    r"^#{2,6}\s+(\d+(?:\.\d+)*)\.\s+(.*?)(?:\s*<!--\s*campo:\s*(\w+)\s*-->)?\s*$",
+    r"^#{2,6}\s+(\d+(?:\.\d+)*)\.\s+(.*?)(?:\s*<!--(.*?)-->)?\s*$",
     re.M,
 )
+_MARCA_CAMPO = re.compile(r"campo:\s*(\w+)")
+_MARCA_PAGINA = re.compile(r"pagina:\s*(\d+)(?:\s*-\s*(\d+))?")
+
+
+def _ler_marcas(comentario: str) -> tuple[str | None, int | None, int | None]:
+    """Extrai `(campo, pagina_inicio, pagina_fim)` do comentario do titulo."""
+    if not comentario:
+        return None, None, None
+    campo = m.group(1) if (m := _MARCA_CAMPO.search(comentario)) else None
+    if p := _MARCA_PAGINA.search(comentario):
+        inicio = int(p.group(1))
+        fim = int(p.group(2)) if p.group(2) else inicio
+        return campo, inicio, fim
+    return campo, None, None
 
 
 def carregar_markdowns(diretorio: Path | None = None) -> list[dict]:
@@ -299,11 +374,14 @@ def carregar_markdowns(diretorio: Path | None = None) -> list[dict]:
                     k, v = ln.split(":", 1)
                     meta[k.strip()] = v.strip().strip('"')
 
-        secoes = [
-            {"numero": num, "titulo": tit, "campo": campo or None,
-             "nivel": num.count(".") + 1}
-            for num, tit, campo in _TITULO_SECAO.findall(texto)
-        ]
+        secoes = []
+        for num, tit, comentario in _TITULO_SECAO.findall(texto):
+            campo, pag_ini, pag_fim = _ler_marcas(comentario)
+            secoes.append(
+                {"numero": num, "titulo": tit.strip(), "campo": campo,
+                 "nivel": num.count(".") + 1,
+                 "pagina_inicio": pag_ini, "pagina_fim": pag_fim}
+            )
 
         docs.append(
             {

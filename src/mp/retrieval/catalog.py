@@ -78,6 +78,22 @@ def documentos_de(familia: str, caminho: str | None = None) -> list[dict]:
     return list(dados.get("documentos") or []) if dados else []
 
 
+def familias_do_documento(documento_id: str, caminho: str | None = None) -> list[str]:
+    """Quais familias um documento cobre. E o caminho inverso do G3.
+
+    Existe para o caso em que o tecnico chega descrevendo o problema por escrito:
+    ali quem aparece primeiro e o **documento**, e a familia e deduzida dele.
+    A ligacao e a mesma do `fault_map.yaml`, so lida ao contrario — nao ha
+    segunda fonte de verdade.
+    """
+    mapa = carregar_fault_map(caminho)["familias"]
+    return [
+        familia
+        for familia, dados in mapa.items()
+        if any(d.get("id") == documento_id for d in (dados.get("documentos") or []))
+    ]
+
+
 def resolver(rotulo: str, caminho: str | None = None) -> dict:
     """Percurso completo rotulo -> familia -> documento, com o veredito dos guardrails.
 

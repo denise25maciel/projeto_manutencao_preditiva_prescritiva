@@ -264,6 +264,83 @@ def g4_trechos_relevantes(trechos, score_minimo: float = SCORE_MINIMO_CHUNK) -> 
 
 
 # --------------------------------------------------------------------------
+# G1T — a evidencia aponta UM manual? (caminho por texto)
+# --------------------------------------------------------------------------
+
+
+def g1t_evidencia_decide(
+    ranking: list[tuple[str, float]],
+    margem_minima: float = config.MARGEM_MINIMA_DOCUMENTO,
+    share_minima: float = config.SHARE_MINIMO_DOCUMENTO,
+) -> Veredito:
+    """A evidencia aponta UM manual, ou ainda ha varios plausiveis?
+
+    E o **G1 do caminho por texto**. No caminho do sensor, o G1 pergunta se o
+    vizinho mais proximo esta perto o bastante; aqui a pergunta equivalente e se
+    o documento vencedor ganhou de longe ou por um fio.
+
+    Existe porque `documento_predominante` e um `max`: ele **sempre** devolve um
+    vencedor, mesmo quando o primeiro fez 1,43 e o segundo 1,39. Sem esta
+    verificacao a sessao fixa um manual por acaso e, como o manual nao muda mais,
+    o acaso governa a conversa inteira.
+
+    **Duas condicoes, e as duas precisam valer:**
+
+    `margem`  o quanto o 1o ganha do 2o. Pega o empate na cabeca.
+    `share`   quanto do peso TOTAL o 1o concentra. Pega o caso que a margem nao
+              enxerga: pesos [1,0; 0,5; 0,5; 0,5; 0,5] tem margem de 50% mas
+              deixam quatro manuais ainda plausiveis. Ganhar do segundo nao e o
+              mesmo que ganhar de todos.
+
+    Reprovar aqui **nao** e recusar. E dizer "ainda nao da para decidir" — o
+    fluxo entra em investigacao e pede mais sintomas.
+    """
+    if not ranking:
+        return Veredito("G1T", False, "Nenhum documento candidato.",
+                        {"candidatos": 0})
+
+    if len(ranking) == 1:
+        return Veredito(
+            "G1T", True, f"Um unico candidato: {ranking[0][0]}.",
+            {"candidatos": 1, "margem": 1.0, "share": 1.0, "ranking": ranking},
+        )
+
+    (d1, p1), (d2, p2) = ranking[0], ranking[1]
+    total = sum(p for _, p in ranking)
+    margem = (p1 - p2) / p1 if p1 > 0 else 0.0
+    share = p1 / total if total > 0 else 0.0
+
+    detalhe = {"candidatos": len(ranking), "margem": round(margem, 4),
+               "share": round(share, 4), "margem_minima": margem_minima,
+               "share_minima": share_minima, "ranking": ranking,
+               "primeiro": d1, "segundo": d2}
+
+    if margem < margem_minima:
+        return Veredito(
+            "G1T", False,
+            f"{d1} ({p1:.2f}) e {d2} ({p2:.2f}) estao empatados — margem de "
+            f"{margem:.0%}, minimo {margem_minima:.0%}.",
+            detalhe,
+        )
+
+    if share < share_minima:
+        return Veredito(
+            "G1T", False,
+            f"{d1} ganha do segundo, mas concentra so {share:.0%} da evidencia "
+            f"(minimo {share_minima:.0%}): {len(ranking)} manuais ainda "
+            "plausiveis.",
+            detalhe,
+        )
+
+    return Veredito(
+        "G1T", True,
+        f"{d1} ganha de {d2} por {margem:.0%} e concentra {share:.0%} da "
+        "evidencia.",
+        detalhe,
+    )
+
+
+# --------------------------------------------------------------------------
 # G5 — a citacao existe?
 # --------------------------------------------------------------------------
 

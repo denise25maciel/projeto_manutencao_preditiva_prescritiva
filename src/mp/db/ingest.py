@@ -171,6 +171,8 @@ def gravar_documentos(motor, docs: list[dict]) -> tuple[int, int]:
                         campo=secao["campo"],
                         texto=corpo,
                         n_caracteres=len(corpo),
+                        pagina_inicio=secao.get("pagina_inicio"),
+                        pagina_fim=secao.get("pagina_fim"),
                     )
                 )
                 n_chunks += 1

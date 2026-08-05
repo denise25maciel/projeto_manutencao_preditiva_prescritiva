@@ -159,6 +159,88 @@ MAX_PONTOS_PAGINA = 30_000
 MIN_PONTOS_SERIE = 200
 
 # --------------------------------------------------------------------------
+# Conversa (Parte 5)
+# --------------------------------------------------------------------------
+
+# Trava de escopo (no 5 do grafo). O manual e fixado no turno 1 e nao muda; uma
+# pergunta cuja MELHOR semelhanca dentro dele fica abaixo disto nao trata do
+# assunto do manual e nao chega ao modelo.
+#
+# Medido contra o Doc2 com 8 perguntas dentro do assunto e 6 fora:
+#
+#   dentro   0.175 a 0.707   (mediana 0.538)
+#   fora     0.088 a 0.196   (mediana 0.159)
+#
+# **As faixas se sobrepoem.** "Como sei que ficou bom?" (dentro) marca 0.175 e
+# fica ABAIXO de "Qual o melhor carro para comprar?" (fora, 0.196). Nenhum
+# limiar unico separa as duas listas — a pergunta curta e generica se parece
+# pouco com qualquer texto, e a semelhanca de cosseno nao distingue "vago" de
+# "off-topic".
+#
+# 0.17 e o valor que barra 5 das 6 perguntas de fora sem barrar nenhuma de
+# dentro. **Com 14 perguntas, e ajuste a uma amostra pequena, nao calibracao.**
+#
+# Consequencia assumida: esta trava e um filtro barato, nao uma garantia. O que
+# garante e a sequencia depois dela — G4 corta o trecho fraco, G5 exige citacao
+# real, e a degradacao entrega o texto do manual quando nada disso se sustenta.
+LIMIAR_ESCOPO = 0.17
+
+# Quantos turnos anteriores entram no prompt. Historico longo demais dilui os
+# trechos do manual, que sao o que importa.
+MAX_TURNOS_NO_PROMPT = 4
+
+# --------------------------------------------------------------------------
+# Investigacao: quando a evidencia nao aponta um manual so
+# --------------------------------------------------------------------------
+
+# Margem relativa entre o 1o e o 2o documento: (p1 - p2) / p1. Abaixo disto a
+# sessao NAO trava — entra em investigacao e pede mais sintomas.
+#
+# Medido com 10 descricoes, somando o peso por documento:
+#
+#   ambiguas    1,2%   3,3%   5,7%   13,8%
+#   decididas   46,2%  47,3%  50,8%  52,7%  62,2%  81,4%
+#
+# O vao entre 13,8% e 46,2% e largo, e 0,25 fica no meio dele.
+#
+# **A margem mede ambiguidade, nao vagueza** — e a distincao importa. Frase
+# especifica pode ser ambigua: "ruido de impacto repetitivo no rolamento" da
+# margem de 3,3% porque Doc1 e Doc3 descrevem isso quase igual, e ai perguntar
+# mais e o certo. Frase vaga pode ser decidida: "barulho estranho" aponta Doc1
+# com 50,8%. Gatilhar por ambiguidade e o comportamento desejado; gatilhar por
+# vagueza seria adivinhar a intencao de quem escreveu.
+#
+# O que a margem **nao** garante: que o vencedor esta certo. Ela diz que a
+# evidencia foi consistente, nao que foi boa. O G4 continua sendo quem barra
+# evidencia fraca.
+#
+# 10 frases e amostra pequena. Como o LIMIAR_ESCOPO, isto e ajuste, nao
+# calibracao — o que sustenta o fluxo e a escolha humana no fim, nao o numero.
+MARGEM_MINIMA_DOCUMENTO = 0.25
+
+# Fatia minima do peso total que o documento vencedor precisa concentrar.
+#
+# A margem so olha o 1o contra o 2o, e por isso deixa passar um caso que ela nao
+# enxerga: pesos [1,0; 0,5; 0,5; 0,5; 0,5] dao margem de 50% — folgada —, mas o
+# lider concentra apenas 33% da evidencia, e ha QUATRO outros manuais ainda
+# plausiveis. E a diferenca entre "ganhou do segundo" e "ganhou de todos".
+#
+# Medido nas mesmas 10 descricoes:
+#
+#   ambiguas    24,7%  26,2%  26,2%  39,7%
+#   decididas   49,1%  49,5%  49,8%  50,5%  61,7%  74,8%
+#
+# 0,45 fica no vao entre 39,7% e 49,1%. As duas condicoes valem juntas: passar
+# na margem e nao concentrar evidencia continua sendo motivo para perguntar.
+SHARE_MINIMO_DOCUMENTO = 0.45
+
+# Quantas vezes o sistema pede mais sintomas antes de desistir de decidir
+# sozinho. Esgotado o teto, ele mostra os candidatos com a evidencia e **o
+# tecnico escolhe** — pessoa escolhendo nao fere os guardrails; quem eles tiram
+# da decisao e o modelo.
+MAX_RODADAS_INVESTIGACAO = 2
+
+# --------------------------------------------------------------------------
 # Qualidade / outliers
 # --------------------------------------------------------------------------
 

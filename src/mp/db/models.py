@@ -240,6 +240,13 @@ class Chunk(Base):
     texto: Mapped[str] = mapped_column(Text)
     n_caracteres: Mapped[int] = mapped_column(Integer)
 
+    # Pagina do PDF de origem. Nula quando o texto veio de transcricao manual
+    # (Doc1 e digitalizado e nao tem camada de texto). A pagina e METADADO,
+    # lido do banco — nunca escrito pelo modelo de linguagem, que so citaria de
+    # memoria e acertaria por acaso.
+    pagina_inicio: Mapped[int | None] = mapped_column(Integer)
+    pagina_fim: Mapped[int | None] = mapped_column(Integer)
+
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
     embedding_modelo: Mapped[str | None] = mapped_column(String(64))
 

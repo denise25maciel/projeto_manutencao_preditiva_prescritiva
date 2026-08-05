@@ -114,7 +114,7 @@ Com o venv ativo, a partir da **raiz do projeto**:
 ### Interface Streamlit
 
 ```bash
-streamlit run ui/app.py
+streamlit run ui/Analise_de_Dados.py
 ```
 
 Abre em `http://localhost:8501`. Três telas no menu lateral:
@@ -203,7 +203,7 @@ reimplementam nada. Nada em produção depende deles.
 │   ├── ingestion/            # TRANSFORMA: sensors (eventos), documents (PDF->MD)
 │   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
-│   ├── app.py                # streamlit run ui/app.py
+│   ├── app.py                # streamlit run ui/Analise_de_Dados.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
 │   └── pages/
 ├── requirements.txt          # instalação do ambiente

@@ -24,6 +24,9 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from mp import config  # noqa: E402
+# Import barato: os SDKs so sao carregados dentro de cada cliente, na hora de
+# conectar. Aqui vem apenas o texto que descreve cada provedor.
+from mp.llm.client import DESCRICAO as DESCRICAO_PROVEDOR  # noqa: E402
 from mp.ingestion import (  # noqa: E402
     analise_corte_interno,
     comparar_abordagens,
@@ -60,6 +63,8 @@ from mp.analysis import (  # noqa: E402
     outliers_iqr,
     perfil_rotulos,
     resumo_geral,
+    saltos_no_arquivo,
+    serie_bruta,
     serie_temporal,
     sugerir_familias,
     taxa_amostragem,
@@ -203,6 +208,58 @@ def r_serie_temporal(rotulo: str, colunas: tuple[str, ...], max_pontos: int | No
     numero de series e o Vega estoura o limite de linhas.
     """
     return serie_temporal(dados(), rotulo, list(colunas), max_pontos=max_pontos)
+
+
+# --- dado bruto -------------------------------------------------------------
+
+
+@st.cache_data(**CACHE)
+def r_serie_bruta(colunas: tuple[str, ...], inicio: int, quantidade: int,
+                  rotulos: tuple[str, ...] = ()):
+    """Trecho do arquivo na ordem de leitura, sem tratamento nenhum.
+
+    `rotulos` vazio = o arquivo inteiro. Filtrar seleciona linhas e nada mais:
+    a ordem e a numeracao continuam sendo as do arquivo.
+    """
+    return serie_bruta(dados(), list(colunas), inicio=inicio,
+                       quantidade=quantidade, rotulos=list(rotulos))
+
+
+@st.cache_data(**CACHE)
+def r_rotulos_do_arquivo():
+    """Os rotulos na ordem em que **aparecem pela primeira vez** no arquivo.
+
+    Nao por frequencia nem alfabetica: a lista de filtro segue a mesma ordem
+    natural do arquivo que o resto desta tela respeita.
+    """
+    coluna = dados()[config.COLUNA_ROTULO]
+    return [str(r) for r in dict.fromkeys(coluna.tolist())]
+
+
+@st.cache_data(**CACHE)
+def r_saltos():
+    """O quanto o tempo anda para tras quando se le o arquivo linha a linha."""
+    return saltos_no_arquivo(dados())
+
+
+@st.cache_data(**CACHE)
+def r_linhas_cruas(inicio: int, quantidade: int, rotulos: tuple[str, ...] = ()):
+    """As linhas do arquivo como estao, todas as colunas.
+
+    Segue o mesmo filtro do grafico, para a tabela e a serie mostrarem o mesmo
+    recorte. A coluna `linha do arquivo` preserva a posicao original.
+    """
+    base = dados().copy()
+    base.insert(0, "linha do arquivo", range(len(base)))
+    if rotulos:
+        base = base[base[config.COLUNA_ROTULO].isin(list(rotulos))]
+    return base.iloc[inicio:inicio + quantidade].copy()
+
+
+@st.cache_data(**CACHE)
+def r_colunas_todas():
+    """Todas as colunas na ordem do arquivo — inclusive `id` e `created_at`."""
+    return list(dados().columns)
 
 
 @st.cache_data(**CACHE)
@@ -384,6 +441,236 @@ def _r_cobertura(versao, familias):
 
 def r_cobertura():
     return _r_cobertura(_versao_md(), tuple(r_familias_banner()["familia"]))
+
+
+# --- modelo de linguagem ----------------------------------------------------
+#
+# Chamada ao modelo NAO entra em cache: a mesma pergunta duas vezes tem de
+# custar duas vezes, senao a tela mente sobre tempo e tokens. So a deteccao de
+# quem esta disponivel e cacheada, e por pouco tempo — o Ollama pode subir ou
+# cair enquanto a pagina esta aberta.
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def r_provedores():
+    """Quem da para usar agora, e por que nao os outros."""
+    from mp.llm import provedores_disponiveis
+
+    return provedores_disponiveis()
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def r_modelos_do_provedor(provedor: str) -> list[str]:
+    """Modelos que o provedor oferece. No Ollama, os realmente baixados."""
+    from mp.llm import criar
+
+    try:
+        return criar(provedor).modelos()
+    except Exception:  # noqa: BLE001 — sem lista, a tela ainda funciona
+        return []
+
+
+def testar_llm(provedor: str, modelo: str, temperatura: float, max_tokens: int):
+    from mp.llm import criar
+
+    cliente = criar(provedor, modelo=modelo, temperatura=temperatura,
+                    max_tokens=max_tokens)
+    return cliente.testar()
+
+
+def conversar_llm(provedor: str, modelo: str, temperatura: float,
+                  max_tokens: int, pergunta: str) -> dict:
+    """Uma pergunta direta ao modelo, sem guardrails e sem contexto.
+
+    E o teste do passo 5.1 e, de quebra, o contraste: mostra o modelo respondendo
+    de cabeca, que e o comportamento que o resto do sistema vai barrar.
+    """
+    from mp.llm import Mensagem, criar
+
+    cliente = criar(provedor, modelo=modelo, temperatura=temperatura,
+                    max_tokens=max_tokens)
+    r = cliente.gerar([
+        Mensagem("system", "Voce e um assistente de manutencao industrial. "
+                           "Responda em portugues, de forma objetiva."),
+        Mensagem("user", pergunta),
+    ])
+    return {
+        "texto": r.texto.strip(), "provedor": r.provedor, "modelo": r.modelo,
+        "tokens_entrada": r.tokens_entrada, "tokens_saida": r.tokens_saida,
+        "segundos": r.segundos,
+    }
+
+
+# --- resposta prescritiva ---------------------------------------------------
+
+
+@st.cache_data(**CACHE)
+def r_catalogo():
+    """O fault_map inteiro como tabela."""
+    from mp.retrieval.catalog import tabela_familias
+
+    return tabela_familias()
+
+
+@st.cache_data(**CACHE)
+def r_rotulos_de(familia: str) -> list[str]:
+    """Os rotulos crus que caem numa familia."""
+    from mp.retrieval.catalog import carregar_fault_map
+
+    dados = carregar_fault_map()["familias"].get(familia, {})
+    return list(dados.get("aliases") or [])
+
+
+@st.cache_resource(show_spinner="Carregando o modelo de embeddings...")
+def _embedder_aquecido():
+    """Deixa o embedder ajustado antes da primeira pergunta.
+
+    `cache_resource` e nao `cache_data`: e um objeto com pesos, nao um valor
+    serializavel. Sem isso, a primeira busca da sessao levaria um minuto
+    carregando o modelo enquanto a tela parece travada.
+    """
+    from mp.retrieval import rag
+
+    return rag._embedder_pronto()
+
+
+def responder_prescritivo(pergunta: str, rotulo: str, usar_llm: bool,
+                          config_llm: dict | None = None, k: int = 5,
+                          so_prescritivos: bool = True):
+    """Roda o pipeline. Com `usar_llm=False`, para no estagio 1."""
+    from mp import pipeline
+    from mp.llm import criar
+
+    _embedder_aquecido()
+
+    cliente = None
+    if usar_llm:
+        cfg = dict(config_llm or {})
+        provedor = cfg.pop("provedor", "ollama")
+        # `modelo=None` sobrescreveria o padrao de cada cliente; so passa se veio.
+        opcoes = {k_: v for k_, v in cfg.items()
+                  if k_ in ("modelo", "temperatura", "max_tokens") and v is not None}
+        cliente = criar(provedor, **opcoes)
+
+    return pipeline.responder(pergunta, rotulo=rotulo, cliente=cliente, k=k,
+                              so_prescritivos=so_prescritivos)
+
+
+# --- conversa (Parte 5) -----------------------------------------------------
+#
+# Sem cache: uma conversa e estado, nao consulta. O objeto `Sessao` vive no
+# `st.session_state` da pagina.
+
+
+@st.cache_resource(show_spinner="Montando o indice de similaridade...")
+def indice_knn():
+    """O historico em memoria, pronto para responder por vizinhanca.
+
+    `cache_resource` porque e um objeto com estado ajustado (escala + arvore),
+    nao um valor serializavel. Construir leva ~3 s e vale para a sessao toda.
+    """
+    from mp.ingestion import construir_eventos
+    from mp.similarity import Indice
+
+    leituras, _ = construir_eventos(dados())
+    return Indice().construir(leituras)
+
+
+def diagnosticar(evento: dict, k: int = 25):
+    """O que os numeros dizem sobre este evento. Sem catalogo, sem texto."""
+    return indice_knn().consultar(evento, k=k)
+
+
+@st.cache_data(**CACHE)
+def r_evento_de_exemplo(rotulo: str | None = None, semente: int = 0) -> dict:
+    """Um evento real do historico, para colar na tela sem digitar 16 numeros.
+
+    Com `rotulo=None` sorteia qualquer leitura — e o caso honesto: ninguem sabe
+    de antemao o que o sensor vai mandar.
+    """
+    import numpy as np
+
+    from mp.similarity import colunas_de_similaridade
+
+    df = dados()
+    if rotulo:
+        df = df[df[config.COLUNA_ROTULO] == rotulo]
+    if df.empty:
+        return {}
+
+    pos = int(np.random.default_rng(semente).integers(0, len(df)))
+    linha = df.iloc[pos]
+
+    campos = colunas_de_similaridade(dados()) + ["rpm", "temperature_c"]
+    evento = {c: round(float(linha[c]), 4) for c in campos if c in linha.index}
+    evento[config.COLUNA_ROTULO] = str(linha[config.COLUNA_ROTULO])
+    return evento
+
+
+def abrir_conversa(evento: dict | None = None, rotulo: str | None = None,
+                   diagnostico=None):
+    from mp.agente import abrir_sessao
+
+    _embedder_aquecido()
+    return abrir_sessao(rotulo=rotulo, evento=evento, diagnostico=diagnostico)
+
+
+def _cliente(usar_llm: bool, config_llm: dict | None):
+    """O cliente de LLM, ou `None`. Um lugar so — tres telas montavam isto igual."""
+    if not usar_llm:
+        return None
+
+    from mp.llm import criar
+
+    cfg = dict(config_llm or {})
+    provedor = cfg.pop("provedor", "ollama")
+    opcoes = {k_: v for k_, v in cfg.items()
+              if k_ in ("modelo", "temperatura", "max_tokens") and v is not None}
+    return criar(provedor, **opcoes)
+
+
+def abrir_conversa_por_texto(descricao: str, k: int = 8, usar_llm: bool = False,
+                             config_llm: dict | None = None):
+    """O caminho principal: o tecnico descreve o problema, o sistema acha o manual.
+
+    Pode nao achar de primeira: quando dois manuais empatam, a sessao volta em
+    **investigacao**, com uma pergunta a fazer ao tecnico. O `cliente` serve so
+    para redigir essa pergunta; sem ele, o texto e generico e o fluxo segue.
+    """
+    from mp.agente import abrir_sessao_por_texto
+
+    _embedder_aquecido()
+    return abrir_sessao_por_texto(
+        descricao, k=k, cliente=_cliente(usar_llm, config_llm)
+    )
+
+
+def continuar_conversa_investigacao(sessao, sintoma: str, k: int = 8,
+                                    usar_llm: bool = False,
+                                    config_llm: dict | None = None):
+    """Mais um sintoma entra na investigacao e a busca recomeca com todos."""
+    from mp.agente import continuar_investigacao
+
+    _embedder_aquecido()
+    return continuar_investigacao(
+        sessao, sintoma, k=k, cliente=_cliente(usar_llm, config_llm)
+    )
+
+
+def escolher_documento(sessao, documento: str):
+    """O tecnico escolhe o manual quando o sistema nao conseguiu decidir."""
+    from mp.agente import fixar_documento
+
+    return fixar_documento(sessao, documento)
+
+
+def responder_turno(sessao, pergunta: str, usar_llm: bool,
+                    config_llm: dict | None = None, k: int = 5,
+                    so_prescritivos: bool = True):
+    from mp.agente import responder
+
+    return responder(sessao, pergunta, cliente=_cliente(usar_llm, config_llm),
+                     k=k, so_prescritivos=so_prescritivos)
 
 
 # --- utilitarios de pagina --------------------------------------------------

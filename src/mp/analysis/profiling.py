@@ -349,6 +349,218 @@ def serie_temporal(
     }
 
 
+def serie_bruta(
+    df: pd.DataFrame,
+    colunas: list[str],
+    inicio: int = 0,
+    quantidade: int = 2000,
+    rotulos: list[str] | None = None,
+) -> dict:
+    """Um trecho do arquivo **na ordem em que foi lido**, sem nenhum tratamento.
+
+    Diferente de `serie_temporal`, que ordena por data, agrupa por sessao e
+    reamostra. Aqui nada disso acontece:
+
+    - o eixo x e a **posicao da linha no arquivo**, nao a data
+    - nenhum valor e agregado — cada ponto e uma leitura
+    - nenhuma linha e deduplicada ou reordenada
+
+    `rotulos` restringe a **quais** linhas aparecem, e so isso. A selecao e uma
+    mascara booleana, que por construcao preserva a ordem do arquivo: escolhe
+    linhas, nunca as reordena nem as renumera. A posicao fisica e capturada
+    antes do filtro e continua sendo o eixo x, entao uma leitura que estava na
+    linha 90.000 continua desenhada em 90.000 mesmo que seja a terceira do
+    recorte. Sem isso o grafico passaria a mentir sobre onde o trecho esta.
+
+    Filtrar abre buracos entre linhas que nao eram vizinhas no arquivo. Esses
+    buracos viram **quebra de bloco** (coluna `bloco`), para a linha do grafico
+    se interromper em vez de atravessar o vao como se a serie fosse continua.
+
+    E a visao mais crua possivel. Ela existe para tornar visivel o que as outras
+    telas ja corrigem em silencio: o arquivo **nao esta em ordem de data**, entao
+    andar uma linha para a frente pode significar voltar semanas no tempo.
+
+    A janela e limitada porque uma leitura por ponto, sem reamostrar, nao cabe no
+    navegador de uma vez — sao 166 mil linhas. A tela navega por trechos.
+
+    Devolve, alem da serie:
+
+    - `faixas` — blocos consecutivos com o mesmo `fault`, para desenhar embaixo
+      do grafico onde cada rotulo comeca e termina
+    - `trocas` — as linhas exatas em que o rotulo mudou, com o salto de tempo
+      correspondente. Salto negativo = a linha seguinte e mais antiga
+    """
+    tempo, rot = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+
+    total_arquivo = len(df)
+
+    # A posicao fisica no arquivo, guardada ANTES do filtro — e ela que vira o
+    # eixo x. `iloc` e nao `loc`: o indice do DataFrame pode nao coincidir com
+    # a posicao.
+    base = df.copy()
+    base["_posicao"] = range(total_arquivo)
+
+    selecionados = [r for r in (rotulos or []) if r]
+    if selecionados:
+        base = base[base[rot].isin(selecionados)]
+
+    # O navegador de trecho anda dentro do que sobrou do filtro.
+    total = len(base)
+    inicio = max(0, min(int(inicio), max(0, total - 1)))
+    fim = min(total, inicio + int(quantidade))
+
+    janela = base.iloc[inicio:fim].copy()
+    janela["linha"] = janela["_posicao"].to_numpy()
+
+    colunas = [c for c in colunas if c in janela.columns]
+
+    vazio = pd.DataFrame(columns=["linha", tempo, rot, "coluna", "valor"])
+    if janela.empty or not colunas:
+        return {"dados": vazio, "faixas": pd.DataFrame(), "trocas": pd.DataFrame(),
+                "inicio": inicio, "fim": fim, "total": total,
+                "total_arquivo": total_arquivo, "n_linhas": 0, "rotulos": [],
+                "filtrado": bool(selecionados), "rotulos_filtro": selecionados,
+                "linha_inicio": 0, "linha_fim": 0, "n_blocos": 0}
+
+    # --- em que ponto a serie se parte -------------------------------------
+    #
+    # Duas coisas distintas, de proposito separadas:
+    #
+    # `muda_rotulo`  o valor de `fault` mudou de uma linha para a outra. E o que
+    #                a tabela de trocas relata, e so isso conta como troca.
+    # `salta_linha`  as duas linhas nao eram vizinhas no arquivo. So acontece
+    #                com filtro ligado, e nao e troca nenhuma — e um buraco
+    #                aberto pela selecao.
+    #
+    # O bloco quebra nos dois casos; a troca, so no primeiro. Misturar os dois
+    # faria o filtro inventar trocas de rotulo que o arquivo nao tem.
+    muda_rotulo = segmentos.mudou_valor(janela[rot])
+    salta_linha = janela["linha"].diff().ne(1).to_numpy(dtype=bool)
+    muda_bloco = muda_rotulo | salta_linha
+
+    grupo = segmentos.numerar_grupos(muda_bloco)
+    janela["bloco"] = grupo
+
+    dados = janela.melt(
+        id_vars=["linha", tempo, rot, "bloco"], value_vars=colunas,
+        var_name="coluna", value_name="valor",
+    )
+
+    # `valor_z` existe so para poder desenhar tudo num grafico so. As unidades
+    # nao sao comparaveis — rpm anda na casa dos milhares e kurtosis fica perto
+    # de 2,5; no mesmo eixo, a segunda vira uma reta colada no zero.
+    #
+    # A referencia e a coluna INTEIRA, nao a janela: assim o valor lido continua
+    # dizendo onde aquele trecho esta em relacao a todo o arquivo. Padronizar
+    # dentro da janela faria um trecho totalmente normal parecer cheio de picos,
+    # porque a escala se ajustaria ao proprio ruido.
+    referencia = df[colunas].agg(["mean", "std"])
+    media = dados["coluna"].map(referencia.loc["mean"]).astype(float)
+    desvio = dados["coluna"].map(referencia.loc["std"]).astype(float)
+    # Coluna constante tem desvio zero: fica em zero em vez de virar infinito.
+    dados["valor_z"] = ((dados["valor"] - media) / desvio.where(desvio > 0)).fillna(0.0)
+
+    # --- onde o rotulo troca ------------------------------------------------
+    faixas = (
+        janela.assign(_g=grupo)
+        .groupby("_g", sort=True)
+        .agg(
+            **{
+                "linha_inicio": ("linha", "min"),
+                "linha_fim": ("linha", "max"),
+                rot: (rot, "first"),
+                "inicio": (tempo, "min"),
+                "fim": (tempo, "max"),
+                "n_linhas": ("linha", "size"),
+            }
+        )
+        .reset_index(drop=True)
+    )
+    # O retangulo vai ate o inicio do bloco seguinte, senao ficam buracos de uma
+    # linha entre as faixas. O ultimo fecha na ultima linha DESENHADA — que com
+    # filtro nao e `fim`, porque `fim` conta o recorte e o eixo conta o arquivo.
+    ultima_linha = int(janela["linha"].max()) + 1
+    faixas["ate"] = faixas["linha_inicio"].shift(-1).fillna(ultima_linha).astype(int)
+    # Meio do bloco: onde o nome do rotulo e escrito, para ficar sempre legivel
+    # sem depender do mouse.
+    faixas["centro"] = (faixas["linha_inicio"] + faixas["ate"]) / 2
+
+    salto = janela[tempo].diff().dt.total_seconds()
+    trocas = pd.DataFrame(
+        {
+            "linha": janela["linha"].to_numpy(),
+            "de": janela[rot].shift().to_numpy(),
+            "para": janela[rot].to_numpy(),
+            tempo: janela[tempo].to_numpy(),
+            "salto_s": salto.to_numpy(),
+        }
+    )
+    # A primeira linha da janela nao e uma troca — e so o comeco do recorte.
+    # Comparar com `inicio` nao serve mais: com filtro, `inicio` e posicao no
+    # recorte e `linha` e posicao no arquivo. A primeira e a primeira, e ponto.
+    nao_e_a_primeira = pd.Series(True, index=range(len(janela)))
+    nao_e_a_primeira.iloc[0] = False
+
+    # `~salta_linha`: so e troca se as duas leituras eram MESMO vizinhas no
+    # arquivo. Com filtro, o rotulo tambem "muda" ao pular de uma linha para
+    # outra a 35 mil de distancia — mas isso e o buraco do filtro, nao uma
+    # troca. Sem esta condicao a tabela de trocas relataria saltos de tempo
+    # gigantes como se fossem emenda entre gravacoes, que e outra coisa.
+    trocas = trocas[
+        muda_rotulo & ~salta_linha & nao_e_a_primeira.to_numpy()
+    ].reset_index(drop=True)
+
+    # Etiqueta pronta para desenhar no grafico, sempre visivel — sem depender de
+    # passar o mouse.
+    trocas["etiqueta"] = [
+        f"{'?' if pd.isna(de) else de} → {para}"
+        for de, para in zip(trocas["de"], trocas["para"])
+    ]
+    # Alterna a altura das etiquetas para duas trocas proximas nao se cobrirem.
+    trocas["fila"] = [i % 2 for i in range(len(trocas))]
+
+    return {
+        "dados": dados,
+        "faixas": faixas,
+        "trocas": trocas,
+        "inicio": inicio,
+        "fim": fim,
+        "total": total,
+        "total_arquivo": total_arquivo,
+        "n_linhas": len(janela),
+        "rotulos": [str(r) for r in faixas[rot].tolist()],
+        "bruto": janela,
+        # Contexto do filtro, para a tela poder avisar o que esta escondendo.
+        "filtrado": bool(selecionados),
+        "rotulos_filtro": selecionados,
+        # Extremos REAIS no arquivo — com filtro, o recorte pode ir da linha 12
+        # a 90.000 e mostrar so algumas centenas no meio.
+        "linha_inicio": int(janela["linha"].min()),
+        "linha_fim": int(janela["linha"].max()),
+        "n_blocos": int(pd.Series(grupo).nunique()),
+    }
+
+
+def saltos_no_arquivo(df: pd.DataFrame) -> dict:
+    """Quanto o tempo anda para tras quando se le o arquivo linha a linha.
+
+    O numero que justifica a tela de dados brutos. Nas outras paginas o dataset
+    ja chega ordenado; aqui medimos o estrago de nao ordenar.
+    """
+    tempo = config.COLUNA_TEMPO
+    delta = df[tempo].diff().dt.total_seconds().dropna()
+    para_tras = delta[delta < 0]
+
+    return {
+        "linhas": len(df),
+        "em_ordem": bool(df[tempo].is_monotonic_increasing),
+        "saltos_para_tras": int(len(para_tras)),
+        "pct_para_tras": round(float(len(para_tras) / len(delta) * 100), 3) if len(delta) else 0.0,
+        "maior_recuo_dias": round(float(-para_tras.min()) / 86400, 2) if len(para_tras) else 0.0,
+        "avanco_mediano_s": round(float(delta[delta >= 0].median()), 3) if (delta >= 0).any() else 0.0,
+    }
+
+
 # --------------------------------------------------------------------------
 # Agrupamento sugerido de rotulos
 # --------------------------------------------------------------------------

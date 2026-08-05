@@ -32,11 +32,12 @@ def carregar(caminho: str | Path | None = None, nrows: int | None = None) -> pd.
 
     O que NAO fazemos: ordenar, deduplicar, descartar coluna ou tratar outlier.
     """
+    #analisar - necessidade da funcao caminho_csv()
     caminho = Path(caminho) if caminho is not None else config.caminho_csv()
 
     df = pd.read_csv(caminho, nrows=nrows)
 
-    # format="mixed" porque a fracao de segundo nao tem largura fixa no arquivo.
+    # format="mixed" porque a fracao de segundo nao tem largura fixa no arquivo. Logo, permite receber diferentes formatos de datetime.
     if config.COLUNA_TEMPO in df.columns:
         df[config.COLUNA_TEMPO] = pd.to_datetime(
             df[config.COLUNA_TEMPO], format="mixed", utc=True
@@ -55,6 +56,7 @@ def colunas_numericas(df: pd.DataFrame, incluir_vazamento: bool = False) -> list
     identificadores temporais, nao medidas fisicas. Entrariam no kNN como
     atalho e o modelo acertaria por proximidade de indice.
     """
+    #analisar demais colunas - definição do vazamento
     cols = df.select_dtypes(include="number").columns.tolist()
     if not incluir_vazamento:
         cols = [c for c in cols if c not in config.COLUNAS_VAZAMENTO]
