@@ -13,11 +13,10 @@ dependencies = [
     "altair>=5.3",
     "pyarrow>=15.0",
     "pypdf>=5.0",
+    "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
-# Parte 2 em diante
-db = ["sqlalchemy>=2.0"]
 # Parte 3 em diante
 ml = ["scikit-learn>=1.5"]
 # Parte 6

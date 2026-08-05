@@ -21,6 +21,9 @@ pyyaml>=6.0,<7           # data/fault_map.yaml (Parte 1)
 # --- Documentos ------------------------------------------------------------
 pypdf>=5.0,<8            # PDFs de procedimento -> Markdown
 
+# --- Banco -----------------------------------------------------------------
+sqlalchemy>=2.0,<3       # esquema do SQLite; migrar para Postgres e trocar a URL
+
 # --- Notebooks -------------------------------------------------------------
 # Fora do runtime: nem o modulo nem a UI dependem destes.
 jupyterlab>=4.0,<5
@@ -30,7 +33,6 @@ matplotlib>=3.8,<4
 # Entram nas proximas partes — ainda nao instalados para manter o ambiente
 # leve. Estao mapeados como extras no pyproject.toml.
 #
-#   Parte 2   sqlalchemy>=2.0
 #   Parte 3   scikit-learn>=1.5
 #   Parte 4   sentence-transformers
 #   Parte 5   ollama

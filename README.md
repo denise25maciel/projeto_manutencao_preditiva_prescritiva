@@ -17,7 +17,7 @@ decisão das equipes técnicas.
 |---|---|---|
 | 0 | Módulo de análise exploratória | ✅ concluída |
 | 1 | Eventos e `fault_map.yaml` | ✅ concluída |
-| 2 | Banco SQLite via SQLAlchemy | ⬜ |
+| 2 | Banco SQLite via SQLAlchemy | ✅ concluída |
 | 3 | Motor de similaridade (kNN) | ⬜ |
 | 4 | RAG e guardrails G0–G5 | ⬜ |
 | 5 | LLM local (Ollama) | ⬜ |
@@ -420,6 +420,55 @@ maior salto da distribuição é de 6,000 s para 16,085 s (2,7×), maior que os 
 entre pausas de horas e de dias. Seu ponto médio dá 11 s.
 
 Registrado em `config.GAP_NOVO_EPISODIO_S = 10 s`, desligado.
+
+## Parte 2 — o banco
+
+Um comando popula tudo:
+
+```bash
+python -m mp.db.ingest
+```
+
+Gera `data/mp.db` (64 MB) em ~10 s. **Repetível**: cada execução recria o banco do
+zero, então rodar duas vezes dá exatamente o mesmo resultado.
+
+### Quatro tabelas
+
+| Tabela | Linhas | O que responde |
+|---|---|---|
+| `readings` | 166.796 | como a máquina vibrou naquele instante |
+| `episodes` | 356 | quantas vezes isso aconteceu e quando |
+| `documents` | 6 | existe procedimento para essa falha |
+| `chunks` | 168 | qual trecho do procedimento responde |
+
+`readings` tem **duas** colunas de evento — `evento_a` e `evento_b` — porque as duas
+ordens de operação estão guardadas lado a lado. `episodes` usa a chave composta
+**(versao, numero)**: 205 eventos da versão A mais 151 da B.
+
+O caminho de uma consulta:
+
+```
+leitura → evento → rótulo → família → documento → trecho
+```
+
+Cada seta é uma consulta exata. A ligação **família → documento** é a única que não
+está no banco: vive no `fault_map.yaml`, versionado no Git, porque é decisão curada
+— no Git cada mudança tem autor, data e motivo; no banco viraria um `UPDATE` sem rastro.
+
+### Verificação
+
+18 checagens conferem o banco contra o CSV: contagens, ausência de nulos, valores de
+200 leituras sorteadas, soma das leituras por versão, coerência entre `evento_a`/
+`evento_b` e o rótulo, e integridade referencial dos chunks.
+
+### Uma limitação do SQLite a saber
+
+O esquema declara `DateTime(timezone=True)`, mas **o SQLite não armazena fuso**. As
+datas voltam sem `+00:00` — o instante está certo, só a etiqueta se perde. Todo
+`created_at` é UTC por construção. Comparar com uma data com fuso levanta
+`TypeError`; use `.replace(tzinfo=timezone.utc)` no que veio do banco.
+
+Some sozinho na migração para PostgreSQL.
 
 ## Dados e privacidade
 
