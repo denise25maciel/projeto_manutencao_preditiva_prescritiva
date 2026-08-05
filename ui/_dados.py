@@ -233,8 +233,19 @@ def r_criterios_limiar(limite_intervalo_s: float | None = None):
 
 @st.cache_data(**CACHE)
 def r_comparar_abordagens():
-    """Ordenar-depois-separar contra separar-depois-ordenar."""
-    return comparar_abordagens(dados())
+    """Ordenar-depois-separar contra separar-depois-ordenar.
+
+    Acrescenta a familia a cada evento das duas bases, para a tela poder filtrar.
+    A familia vem do `fault_map.yaml` — o catalogo curado, nao o heuristico.
+    """
+    from mp.retrieval import familia_de
+
+    resultado = comparar_abordagens(dados())
+    for chave in ("eventos_a", "eventos_b"):
+        eventos = resultado[chave].copy()
+        eventos["familia"] = eventos[config.COLUNA_ROTULO].map(familia_de)
+        resultado[chave] = eventos
+    return resultado
 
 
 @st.cache_data(**CACHE)

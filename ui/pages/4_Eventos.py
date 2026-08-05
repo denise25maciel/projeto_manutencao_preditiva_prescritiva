@@ -33,13 +33,42 @@ try:
 except FileNotFoundError as e:
     D.aviso_csv_ausente(e)
 
-eventos_a = comp["eventos_a"]
-eventos_b = comp["eventos_b"]
+eventos_a_todos = comp["eventos_a"]
+eventos_b_todos = comp["eventos_b"]
 resumo = comp["resumo"]
 linha_a = resumo.iloc[0]
 linha_b = resumo.iloc[1]
 
+NOME_A = "🅐 Data → Falha"
+NOME_B = "🅑 Falha → Data"
+COR_A = "#2d6a4f"
+COR_B = "#d1495b"
+
 st.divider()
+
+# ==========================================================================
+# Filtro por familia — vale para tudo o que vem abaixo
+# ==========================================================================
+familias = sorted(
+    set(eventos_a_todos["familia"].dropna()) | set(eventos_b_todos["familia"].dropna())
+)
+
+escolhidas = st.multiselect(
+    "Familia de falhas",
+    familias,
+    default=familias,
+    help="Filtra as duas bases e o grafico. Deixe vazio para ver tudo.",
+)
+filtro = escolhidas or familias
+
+eventos_a = eventos_a_todos[eventos_a_todos["familia"].isin(filtro)]
+eventos_b = eventos_b_todos[eventos_b_todos["familia"].isin(filtro)]
+
+if len(escolhidas) < len(familias):
+    st.caption(
+        f"Mostrando {len(escolhidas)} de {len(familias)} familias: "
+        f"{len(eventos_a)} eventos na base 🅐 e {len(eventos_b)} na 🅑."
+    )
 
 # ==========================================================================
 # As duas bases, lado a lado
@@ -47,15 +76,24 @@ st.divider()
 esquerda, direita = st.columns(2, gap="large")
 
 with esquerda:
-    st.subheader("🅐 Data → Falha")
+    st.markdown(
+        f"<h3 style='color:{COR_A};margin-bottom:0'>{NOME_A}</h3>",
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Ordena o arquivo inteiro por data. Depois percorre de cima a baixo e "
         "comeca um evento novo quando o nome da falha muda."
     )
     st.metric("Eventos", len(eventos_a))
     a1, a2 = st.columns(2)
-    a1.metric("Maior duracao", f"{linha_a['duracao_maxima_h']:.0f} h")
-    a2.metric("Duracao tipica", f"{linha_a['duracao_mediana_min']:.0f} min")
+    a1.metric(
+        "Maior duracao",
+        f"{eventos_a['duracao_s'].max() / 3600:.0f} h" if len(eventos_a) else "—",
+    )
+    a2.metric(
+        "Duracao tipica",
+        f"{eventos_a['duracao_min'].median():.0f} min" if len(eventos_a) else "—",
+    )
 
     st.dataframe(
         eventos_a[["evento", "fault", "n_leituras", "inicio", "duracao_min"]],
@@ -78,15 +116,24 @@ with esquerda:
     )
 
 with direita:
-    st.subheader("🅑 Falha → Data")
+    st.markdown(
+        f"<h3 style='color:{COR_B};margin-bottom:0'>{NOME_B}</h3>",
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Separa as leituras por falha. Depois ordena cada grupo por data. "
         "Como o nome nao muda dentro do grupo, cada falha vira um evento."
     )
     st.metric("Eventos", len(eventos_b))
     b1, b2 = st.columns(2)
-    b1.metric("Maior duracao", f"{linha_b['duracao_maxima_h']:.0f} h")
-    b2.metric("Duracao tipica", f"{linha_b['duracao_mediana_min']:.0f} min")
+    b1.metric(
+        "Maior duracao",
+        f"{eventos_b['duracao_s'].max() / 3600:.0f} h" if len(eventos_b) else "—",
+    )
+    b2.metric(
+        "Duracao tipica",
+        f"{eventos_b['duracao_min'].median():.0f} min" if len(eventos_b) else "—",
+    )
 
     st.dataframe(
         eventos_b[["evento", "fault", "n_leituras", "inicio", "duracao_min"]],
@@ -111,12 +158,92 @@ with direita:
 st.divider()
 
 # ==========================================================================
+# Linha do tempo das duas bases
+# ==========================================================================
+st.header("Os eventos na linha do tempo")
+
+st.markdown(
+    "Cada barra e um evento, do inicio ao fim. Verde e a base 🅐, vermelho a 🅑. "
+    "Onde a barra vermelha e longa e a verde e curta, as duas discordam."
+)
+
+bases_visiveis = st.multiselect(
+    "Bases no grafico",
+    [NOME_A, NOME_B],
+    default=[NOME_A, NOME_B],
+    help="Desmarque uma para ver a outra sozinha.",
+)
+
+partes = []
+if NOME_A in bases_visiveis and len(eventos_a):
+    partes.append(eventos_a.assign(base=NOME_A))
+if NOME_B in bases_visiveis and len(eventos_b):
+    partes.append(eventos_b.assign(base=NOME_B))
+
+if not partes:
+    st.info("Selecione ao menos uma base para ver o grafico.")
+else:
+    linha_tempo = pd.concat(partes, ignore_index=True)
+
+    # Com muitas falhas na tela, o eixo Y vira uma lista ilegivel. Acima de 30
+    # agrupamos por familia; abaixo disso mostramos cada falha.
+    n_falhas = linha_tempo["fault"].nunique()
+    eixo_y = "fault" if n_falhas <= 30 else "familia"
+    titulo_y = "falha" if eixo_y == "fault" else "familia"
+
+    if eixo_y == "familia":
+        st.caption(
+            f"{n_falhas} falhas selecionadas — o eixo agrupa por familia para "
+            "continuar legivel. Escolha menos familias para ver falha a falha."
+        )
+
+    escala = alt.Scale(domain=[NOME_A, NOME_B], range=[COR_A, COR_B])
+    n_linhas = linha_tempo[eixo_y].nunique()
+
+    st.altair_chart(
+        alt.Chart(linha_tempo)
+        .mark_bar(height=9, cornerRadius=2)
+        .encode(
+            x=alt.X("inicio:T", title="data e hora"),
+            x2="fim:T",
+            y=alt.Y(f"{eixo_y}:N", title=titulo_y),
+            yOffset=alt.YOffset("base:N"),
+            color=alt.Color("base:N", title=None, scale=escala,
+                            legend=alt.Legend(orient="top")),
+            tooltip=[
+                alt.Tooltip("base:N", title="base"),
+                alt.Tooltip("fault:N", title="falha"),
+                alt.Tooltip("inicio:T", title="comecou", format="%d/%m/%Y %H:%M"),
+                alt.Tooltip("fim:T", title="terminou", format="%d/%m/%Y %H:%M"),
+                alt.Tooltip("duracao_min:Q", title="duracao (min)", format=".0f"),
+                alt.Tooltip("n_leituras:Q", title="leituras"),
+            ],
+        )
+        .properties(height=max(220, 26 * n_linhas))
+        .interactive(),
+        width="stretch",
+    )
+
+    st.caption(
+        "Use a roda do mouse para dar zoom no tempo. Eventos muito curtos "
+        "aparecem como riscos finos."
+    )
+
+st.divider()
+
+# ==========================================================================
 # O resultado do teste
 # ==========================================================================
 st.header("As duas dao o mesmo resultado?")
 
-if comp["resultado_igual"]:
+if len(eventos_a) == len(eventos_b) and comp["resultado_igual"]:
     st.success("Sim. As duas produzem exatamente os mesmos eventos.")
+elif len(eventos_a) == len(eventos_b):
+    st.warning(
+        f"Nesta selecao as duas dao o mesmo numero de eventos ({len(eventos_a)}), "
+        "mas no arquivo inteiro elas divergem — "
+        f"{len(eventos_a_todos)} contra {len(eventos_b_todos)}."
+    )
 else:
     st.error(
         f"""
@@ -131,16 +258,17 @@ A diferenca aparece quando a **mesma falha foi medida em dias diferentes**:
 """
     )
 
-    pior = eventos_b.loc[eventos_b["duracao_s"].idxmax()]
-    st.warning(
-        f"""
+    if len(eventos_b):
+        pior = eventos_b.loc[eventos_b["duracao_s"].idxmax()]
+        st.warning(
+            f"""
 **Exemplo concreto.** Na base 🅑, a falha `{pior['fault']}` vira **um evento**
 que comeca em {pior['inicio']:%d/%m} e termina em {pior['fim']:%d/%m} —
-**{pior['duracao_s'] / 86400:.0f} dias** de "duracao".
+**{pior['duracao_s'] / 86400:.1f} dias** de "duracao".
 
-A maquina nao ficou {pior['duracao_s'] / 86400:.0f} dias sendo medida sem parar.
+A maquina nao ficou todo esse tempo sendo medida sem parar.
 """
-    )
+        )
 
 st.divider()
 
@@ -162,51 +290,64 @@ cada evento calculamos **o quanto suas leituras se afastam do proprio centro**.
 """
 )
 
+# Calculado sobre o recorte escolhido, nao sobre o arquivo inteiro: assim o
+# numero acompanha a familia que esta na tela.
+disp_a = float(eventos_a["dispersao"].median()) if len(eventos_a) else float("nan")
+disp_b = float(eventos_b["dispersao"].median()) if len(eventos_b) else float("nan")
+
 s1, s2 = st.columns(2)
 s1.metric(
-    "🅐 Data → Falha",
-    f"{linha_a['dispersao_mediana']:.2f}",
+    NOME_A,
+    f"{disp_a:.2f}" if pd.notna(disp_a) else "—",
     help="Dispersao tipica dentro dos eventos. Menor e melhor.",
 )
 s2.metric(
-    "🅑 Falha → Data",
-    f"{linha_b['dispersao_mediana']:.2f}",
-    f"{(linha_b['dispersao_mediana'] / linha_a['dispersao_mediana'] - 1) * 100:+.0f}% pior",
+    NOME_B,
+    f"{disp_b:.2f}" if pd.notna(disp_b) else "—",
+    f"{(disp_b / disp_a - 1) * 100:+.0f}% pior" if pd.notna(disp_a) and disp_a else None,
     delta_color="inverse",
 )
 
 comparativo = pd.concat(
     [
-        comp["coesao_a"][["dispersao"]].assign(base="🅐 Data → Falha"),
-        comp["coesao_b"][["dispersao"]].assign(base="🅑 Falha → Data"),
+        eventos_a[["dispersao"]].assign(base=NOME_A),
+        eventos_b[["dispersao"]].assign(base=NOME_B),
     ]
 )
 
-st.altair_chart(
-    alt.Chart(comparativo)
-    .mark_boxplot(extent="min-max", size=40)
-    .encode(
-        x=alt.X("dispersao:Q", title="dispersao dentro do evento (menor = melhor)",
-                scale=alt.Scale(type="symlog")),
-        y=alt.Y("base:N", title=None),
-        color=alt.Color(
-            "base:N", legend=None,
-            scale=alt.Scale(domain=["🅐 Data → Falha", "🅑 Falha → Data"],
-                            range=["#2d6a4f", "#d1495b"]),
-        ),
+if not comparativo.empty:
+    st.altair_chart(
+        alt.Chart(comparativo)
+        .mark_boxplot(extent="min-max", size=40)
+        .encode(
+            x=alt.X("dispersao:Q",
+                    title="dispersao dentro do evento (menor = melhor)",
+                    scale=alt.Scale(type="symlog")),
+            y=alt.Y("base:N", title=None),
+            color=alt.Color("base:N", legend=None,
+                            scale=alt.Scale(domain=[NOME_A, NOME_B],
+                                            range=[COR_A, COR_B])),
+        )
+        .properties(height=180),
+        width="stretch",
     )
-    .properties(height=180),
-    width="stretch",
-)
 
-st.info(
-    f"""
-A base 🅑 tem dispersao **{(linha_b['dispersao_mediana'] / linha_a['dispersao_mediana'] - 1) * 100:.0f}% maior**.
+if pd.notna(disp_a) and pd.notna(disp_b) and disp_a:
+    diferenca = (disp_b / disp_a - 1) * 100
+    if diferenca > 1:
+        st.info(
+            f"""
+A base 🅑 tem dispersao **{diferenca:.0f}% maior**.
 
 Faz sentido: ao juntar medicoes feitas com semanas de diferenca, ela mistura
 leituras que nao se parecem — a maquina nao estava no mesmo estado.
 """
-)
+        )
+    else:
+        st.info(
+            "Nesta selecao as duas bases tem dispersao parecida — sao familias em "
+            "que cada falha foi medida uma vez so, entao nao ha o que juntar."
+        )
 
 with st.expander("Os eventos com leituras mais diferentes entre si"):
     st.caption(
