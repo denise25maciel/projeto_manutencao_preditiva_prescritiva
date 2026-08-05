@@ -24,18 +24,20 @@ import pandas as pd
 
 from mp import config, segmentos
 
-# Regra atual: um evento novo comeca quando o rotulo muda. Nada mais.
+# Regra atual: um evento novo comeca quando muda o rotulo OU a rotacao
+# (`config.COLUNAS_QUEBRA_EVENTO`). Sem pausa de tempo.
 #
 # `limite_intervalo_s` existe e vem desligado. A analise da tela "Qualidade dos
 # Dados" mostra que um corte de 10 s separaria ensaios que hoje ficam juntos —
-# mas a decisao foi comecar so pelo rotulo. O parametro fica pronto para quando
-# a decisao mudar, e `diagnostico_eventos` reporta o custo de mante-lo desligado.
+# mas a decisao foi nao usar tempo. O parametro fica pronto para quando a decisao
+# mudar, e `diagnostico_eventos` reporta o custo de mante-lo desligado.
 LIMITE_INTERVALO_PADRAO: float | None = None
 
 
 def construir_eventos(
     df: pd.DataFrame,
     limite_intervalo_s: float | None = LIMITE_INTERVALO_PADRAO,
+    colunas_quebra: tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Agrupa as leituras em eventos.
 
@@ -47,10 +49,18 @@ def construir_eventos(
     - `eventos`  — uma linha por evento: rotulo, quantas leituras, inicio, fim
       e duracao.
 
-    A ordenacao por data e obrigatoria e feita aqui: o arquivo bruto vem fora de
-    ordem, e agrupar linhas vizinhas num arquivo desordenado nao significa nada.
+    A ordenacao por data e obrigatoria e feita aqui. O arquivo bruto e quase
+    todo ordenado, mas tem 51 pontos onde blocos foram emendados fora de ordem;
+    agrupar linhas vizinhas atraves de um desses pontos juntaria leituras
+    separadas por semanas.
+
+    `colunas_quebra` define o que encerra um evento — por padrao `fault` e `rpm`
+    (ver `config.COLUNAS_QUEBRA_EVENTO`). O rpm importa: a bancada rodava varias
+    rotacoes em sequencia sem trocar o nome da falha, e sem ele um unico "evento"
+    empilhava tres assinaturas de vibracao diferentes.
     """
     tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+    colunas_quebra = colunas_quebra or config.COLUNAS_QUEBRA_EVENTO
 
     leituras = df.sort_values(tempo, kind="stable").reset_index(drop=True)
     if leituras.empty:
@@ -60,15 +70,20 @@ def construir_eventos(
         )
         return leituras.assign(evento=pd.Series(dtype="int64")), vazio
 
-    cortes = [segmentos.mudou_valor(leituras[rotulo])]
+    presentes = [c for c in colunas_quebra if c in leituras.columns]
+    cortes = [segmentos.mudou_valor(leituras[c]) for c in presentes]
     if limite_intervalo_s is not None:
         cortes.append(segmentos.passou_intervalo(leituras[tempo], limite_intervalo_s))
 
     grupos = segmentos.numerar_grupos(*cortes)
     leituras["evento"] = grupos
 
+    # `rpm` entra no resumo quando participa da quebra: e constante dentro do
+    # evento por construcao, e sem ele a tabela nao diria em que regime o ensaio
+    # foi feito.
+    resumir = [rotulo] + [c for c in presentes if c != rotulo]
     eventos = segmentos.resumir_grupos(
-        leituras, grupos, coluna_tempo=tempo, primeiro_de=[rotulo]
+        leituras, grupos, coluna_tempo=tempo, primeiro_de=resumir
     ).rename(columns={"_grupo": "evento"})
 
     return leituras, eventos
@@ -77,21 +92,26 @@ def construir_eventos(
 def construir_eventos_por_rotulo(
     df: pd.DataFrame,
     limite_intervalo_s: float | None = None,
+    colunas_quebra: tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Abordagem alternativa: separa por rotulo PRIMEIRO, ordena depois.
+    """Abordagem alternativa: separa PRIMEIRO, ordena depois.
 
     Em `construir_eventos` a ordem e: ordenar o arquivo inteiro por data e depois
-    quebrar quando o rotulo muda. Aqui e o contrario: separa as leituras por
-    rotulo e so entao ordena cada grupo no tempo.
+    quebrar quando o rotulo (ou o rpm) muda. Aqui e o contrario: separa as
+    leituras pelas mesmas colunas e so entao ordena cada grupo no tempo.
+
+    Os criterios de quebra sao os mesmos nas duas — o que muda e a ORDEM das
+    operacoes. E isso que a comparacao testa.
 
     A diferenca nao e de estilo. Na primeira, um rotulo que reaparece semanas
     depois vira **dois eventos**, porque no meio houve leituras de outro rotulo.
-    Nesta, os dois trechos ficam no **mesmo** evento, ja que dentro do grupo o
-    rotulo nunca muda.
+    Nesta, os dois trechos ficam no **mesmo** evento, ja que dentro do grupo nada
+    muda.
 
     Existe para ser comparada com a outra, nao para substitui-la.
     """
     tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+    colunas_quebra = colunas_quebra or config.COLUNAS_QUEBRA_EVENTO
 
     if df.empty:
         vazio = pd.DataFrame(
@@ -100,10 +120,12 @@ def construir_eventos_por_rotulo(
         )
         return df.assign(evento=pd.Series(dtype="int64")), vazio
 
-    # Ordena por (rotulo, tempo): agrupa primeiro, cronologia depois.
-    leituras = df.sort_values([rotulo, tempo], kind="stable").reset_index(drop=True)
+    presentes = [c for c in colunas_quebra if c in df.columns]
+    # Ordena pelas colunas de quebra e so depois pelo tempo: agrupa primeiro,
+    # cronologia dentro do grupo.
+    leituras = df.sort_values([*presentes, tempo], kind="stable").reset_index(drop=True)
 
-    cortes = [segmentos.mudou_valor(leituras[rotulo])]
+    cortes = [segmentos.mudou_valor(leituras[c]) for c in presentes]
     if limite_intervalo_s is not None:
         # Dentro de um grupo o tempo e crescente, entao o intervalo faz sentido.
         cortes.append(segmentos.passou_intervalo(leituras[tempo], limite_intervalo_s))
@@ -111,8 +133,9 @@ def construir_eventos_por_rotulo(
     grupos = segmentos.numerar_grupos(*cortes)
     leituras["evento"] = grupos
 
+    resumir = [rotulo] + [c for c in presentes if c != rotulo]
     eventos = segmentos.resumir_grupos(
-        leituras, grupos, coluna_tempo=tempo, primeiro_de=[rotulo]
+        leituras, grupos, coluna_tempo=tempo, primeiro_de=resumir
     ).rename(columns={"_grupo": "evento"})
 
     return leituras, eventos
@@ -458,7 +481,7 @@ def diagnostico_eventos(
 ) -> pd.DataFrame:
     """Aponta eventos que provavelmente deveriam ser mais de um.
 
-    Como a regra atual so quebra na mudanca de rotulo, um evento pode conter uma
+    Como a regra nao usa tempo, um evento pode conter uma
     interrupcao longa por dentro: pararam de gravar e retomaram o mesmo ensaio
     dias depois, sem trocar o nome.
 
@@ -483,12 +506,12 @@ def diagnostico_eventos(
 def analise_corte_interno(leituras: pd.DataFrame, cortes=None) -> dict:
     """Como um corte por tempo agiria sobre os eventos que ja existem.
 
-    A regra atual so quebra na troca de rotulo, entao alguns eventos carregam
+    A regra nao usa tempo, entao alguns eventos carregam
     interrupcoes por dentro. Esta funcao olha **so esses intervalos internos** e
     responde: se passassemos a cortar tambem por tempo, o que mudaria?
 
     Diferente da analise da tela "Qualidade dos Dados", que examina o arquivo
-    inteiro para escolher um limiar. Aqui o recorte ja e o resultado: dos 205
+    inteiro para escolher um limiar. Aqui o recorte ja e o resultado: dos
     eventos formados, quais se partiriam e em quantos.
 
     Devolve:
@@ -723,6 +746,23 @@ def validar_eventos(
             bool((rotulos_por_evento <= 1).all()),
             f"{int((rotulos_por_evento > 1).sum())} evento(s) com mais de um rotulo",
         ),
+    ]
+
+    # Uma checagem por coluna de quebra alem do rotulo — hoje, o rpm. Sem ela,
+    # um evento podia empilhar tres regimes de rotacao e ninguem percebia.
+    for coluna in config.COLUNAS_QUEBRA_EVENTO:
+        if coluna == rotulo or coluna not in leituras.columns:
+            continue
+        distintos = leituras.groupby("evento")[coluna].nunique()
+        checagens.append(
+            (
+                f"Nenhum evento mistura dois valores de `{coluna}`",
+                bool((distintos <= 1).all()),
+                f"{int((distintos > 1).sum())} evento(s) com mais de um valor",
+            )
+        )
+
+    checagens += [
         (
             "Nenhuma leitura foi perdida ou duplicada",
             soma == len(original),

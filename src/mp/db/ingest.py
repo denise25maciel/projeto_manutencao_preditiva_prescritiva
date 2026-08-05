@@ -101,8 +101,10 @@ def preparar_eventos(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         saida["familia"] = saida[rotulo].map(resolver_familia)
         saida["dispersao"] = saida["numero"].map(coesao)
         saida["maior_buraco_s"] = saida["numero"].map(buracos).fillna(0.0)
+        if "rpm" not in saida.columns:
+            saida["rpm"] = None
         return saida[
-            ["versao", "numero", rotulo, "familia", "n_leituras",
+            ["versao", "numero", rotulo, "familia", "rpm", "n_leituras",
              "inicio", "fim", "duracao_s", "dispersao", "maior_buraco_s"]
         ]
 

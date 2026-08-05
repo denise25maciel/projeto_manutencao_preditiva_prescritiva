@@ -19,14 +19,39 @@ st.title("🧩 Eventos — teste de duas bases")
 
 st.markdown(
     """
-Um **evento** e uma vez em que a maquina foi medida com o mesmo defeito.
-Agrupar as 166.796 linhas em eventos e o que permite responder *"quantas vezes
-isso aconteceu?"*.
+Um **evento** e uma vez em que a maquina foi medida com o mesmo defeito, na mesma
+rotacao. Agrupar as 166.796 linhas em eventos e o que permite responder *"quantas
+vezes isso aconteceu?"*.
 
 Ha duas ordens possiveis para montar esses eventos. Aqui elas rodam lado a lado,
 sobre o mesmo arquivo.
 """
 )
+
+with st.expander("Por que a rotacao encerra um evento"):
+    st.markdown(
+        """
+No comeco a regra quebrava so na troca de falha. O resultado eram **136 dos 205
+eventos misturando rotacoes** — 95% das leituras.
+
+A bancada rodava 500, 1000 e 2000 rpm em sequencia sem trocar o nome da falha,
+entao tres ensaios viravam um evento so.
+
+O caso extremo era o evento de `rolamento_combination_pos_2`:
+
+| rotacao | leituras | velocidade RMS |
+|---|---|---|
+| 500 rpm | 50 | 3,5 |
+| 1.000 rpm | 50 | 5,4 |
+| 2.000 rpm | 50 | **21,1** |
+
+Seis vezes maior dentro do "mesmo" evento. A mediana dele nao descrevia nenhum
+dos tres regimes.
+
+Incluindo a rotacao na regra: **205 → 526 eventos**, dispersao interna tipica de
+**2,40 → 1,31**, e zero eventos com regime misturado.
+"""
+    )
 
 try:
     comp = D.r_comparar_abordagens()
@@ -82,7 +107,7 @@ with esquerda:
     )
     st.caption(
         "Ordena o arquivo inteiro por data. Depois percorre de cima a baixo e "
-        "comeca um evento novo quando o nome da falha muda."
+        "comeca um evento novo quando muda a falha ou a rotacao."
     )
     st.metric("Eventos", len(eventos_a))
     a1, a2 = st.columns(2)
@@ -122,7 +147,7 @@ with direita:
     )
     st.caption(
         "Separa as leituras por falha. Depois ordena cada grupo por data. "
-        "Como o nome nao muda dentro do grupo, cada falha vira um evento."
+        "Como nada muda dentro do grupo, cada combinacao vira um evento."
     )
     st.metric("Eventos", len(eventos_b))
     b1, b2 = st.columns(2)

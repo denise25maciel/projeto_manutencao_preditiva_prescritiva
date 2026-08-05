@@ -105,6 +105,23 @@ TOLERANCIA_INTERVALO_S = 0.25  # +-0.25s ainda conta como cadencia nominal
 # dos graficos de serie temporal.
 GAP_NOVA_SESSAO_S = 60.0
 
+# Colunas cuja mudanca encerra um evento.
+#
+# `fault` e obvia: outro defeito, outro evento.
+#
+# `rpm` entrou depois de uma verificacao. Com a quebra so por rotulo, **136 dos
+# 205 eventos misturavam rotacoes** — 95% das leituras. A bancada rodava 500,
+# 1000 e 2000 rpm em sequencia sem trocar o nome da falha, e os tres ensaios
+# viravam um evento so.
+#
+# O caso extremo: o evento de `rolamento_combination_pos_2` tinha velocidade RMS
+# de 3,5 em 500 rpm e 21,1 em 2000 rpm — seis vezes maior, dentro do "mesmo"
+# evento. A mediana dele nao descrevia nenhum dos tres regimes.
+#
+# Incluir o rpm leva a dispersao interna tipica de 2,40 para 1,31 e zera os
+# eventos com regime misturado.
+COLUNAS_QUEBRA_EVENTO = (COLUNA_ROTULO, "rpm")
+
 # Corte que separa um ENSAIO do seguinte — a fronteira do episodio (Parte 1).
 # Menor que o de campanha de proposito: o operador leva de 20 a 45 s trocando o
 # arranjo da bancada entre dois ensaios, e com 60 s dois ensaios consecutivos do

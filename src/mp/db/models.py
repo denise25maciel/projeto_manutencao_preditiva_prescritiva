@@ -147,6 +147,12 @@ class Episodio(Base):
     # copiada para a consulta ser direta; a fonte da verdade continua no arquivo.
     familia: Mapped[str | None] = mapped_column(String(64), index=True)
 
+    # A rotacao faz parte da identidade do evento: ela encerra um e comeca outro
+    # (`config.COLUNAS_QUEBRA_EVENTO`), entao e constante aqui por construcao.
+    # Sem ela a tabela nao diria em que regime o ensaio foi feito — e o mesmo
+    # defeito a 500 e a 2000 rpm tem assinaturas muito diferentes.
+    rpm: Mapped[float | None] = mapped_column(Float, index=True)
+
     n_leituras: Mapped[int] = mapped_column(Integer)
     inicio: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     fim: Mapped[datetime] = mapped_column(DateTime(timezone=True))

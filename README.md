@@ -387,21 +387,37 @@ ruidosa.
 
 ## Parte 1 — resultados
 
-**166.796 linhas → 205 eventos.** Um evento é uma vez em que a máquina foi medida
-com o mesmo defeito. É o evento que responde *"quantas vezes isso aconteceu"* —
-contar linhas responderia 13.000 para `rolamento_inner`, quando foram algumas
-medições longas.
+**166.796 linhas → 526 eventos.** Um evento é uma vez em que a máquina foi medida
+com o mesmo defeito, na mesma rotação. É o evento que responde *"quantas vezes isso
+aconteceu"* — contar linhas responderia 13.000 para `rolamento_inner`, quando foram
+algumas medições longas.
 
-A regra quebra **apenas na troca de rótulo**. Cinco verificações binárias confirmam
-o agrupamento: nenhum evento mistura rótulos, nenhuma leitura se perdeu ou duplicou,
-todas pertencem a um evento, tudo em ordem de data, numeração consecutiva.
+A regra quebra na troca de **rótulo** ou de **rotação**. Seis verificações binárias
+confirmam o agrupamento: nenhum evento mistura rótulos, nenhum mistura rotações,
+nenhuma leitura se perdeu ou duplicou, todas pertencem a um evento, tudo em ordem de
+data, numeração consecutiva.
+
+### Por que a rotação encerra um evento
+
+A primeira versão quebrava só na troca de rótulo. O resultado: **136 dos 205 eventos
+misturavam rotações** — 95% das leituras. A bancada rodava 500, 1000 e 2000 rpm em
+sequência sem trocar o nome da falha, então três ensaios viravam um evento só.
+
+No caso extremo, um evento de `rolamento_combination_pos_2` tinha velocidade RMS de
+3,5 mm/s a 500 rpm e **21,1 a 2000 rpm** — seis vezes maior dentro do "mesmo" evento.
+A mediana dele não descrevia nenhum dos três regimes.
+
+| Regra | Eventos | Dispersão interna | Com rotação misturada |
+|---|---|---|---|
+| Só rótulo | 205 | 2,40 | **136** |
+| **Rótulo + rotação** | **526** | **1,31** | **0** |
 
 ### As duas ordens de operação não são equivalentes
 
 | Abordagem | Eventos | Maior duração | Dispersão interna |
 |---|---|---|---|
-| **A)** ordena por data → separa por rótulo | 205 | 159 h | 2,40 |
-| **B)** separa por rótulo → ordena por data | 151 | **943 h** | **3,12** |
+| **A)** ordena por data → separa | 526 | 101 h | 1,31 |
+| **B)** separa → ordena por data | 436 | **943 h** | 1,36 |
 
 Na B, cada grupo tem um rótulo só; o rótulo nunca muda, então nunca há quebra e
 cada rótulo vira **um** evento — mesmo tendo sido medido em maio e de novo em junho.
@@ -416,7 +432,7 @@ ao juntar medições separadas por semanas, ela mistura leituras que não se par
 ### O corte por tempo, adiado mas justificado
 
 A regra atual ignora pausas: se a coleta parou e retomou com o mesmo rótulo, vira um
-evento só. Isso acontece em **63 dos 205 eventos**.
+evento só. Isso acontece em **28 dos 526 eventos**.
 
 Se a decisão mudar, o limiar já está definido e defendido. Os intervalos entre
 leituras têm uma **faixa vazia**: nada entre 6,000 s e 16,085 s, em 166.591
@@ -438,7 +454,7 @@ Um comando popula tudo:
 python -m mp.db.ingest
 ```
 
-Gera `data/mp.db` (64 MB) em ~10 s. **Repetível**: cada execução recria o banco do
+Gera `data/mp.db` (64 MB) em ~16 s. **Repetível**: cada execução recria o banco do
 zero, então rodar duas vezes dá exatamente o mesmo resultado.
 
 ### Quatro tabelas
@@ -446,13 +462,13 @@ zero, então rodar duas vezes dá exatamente o mesmo resultado.
 | Tabela | Linhas | O que responde |
 |---|---|---|
 | `readings` | 166.796 | como a máquina vibrou naquele instante |
-| `episodes` | 356 | quantas vezes isso aconteceu e quando |
+| `episodes` | 962 | quantas vezes isso aconteceu e quando |
 | `documents` | 6 | existe procedimento para essa falha |
 | `chunks` | 168 | qual trecho do procedimento responde |
 
 `readings` tem **duas** colunas de evento — `evento_a` e `evento_b` — porque as duas
 ordens de operação estão guardadas lado a lado. `episodes` usa a chave composta
-**(versao, numero)**: 205 eventos da versão A mais 151 da B.
+**(versao, numero)**: 526 eventos da versão A mais 436 da B.
 
 O caminho de uma consulta:
 
