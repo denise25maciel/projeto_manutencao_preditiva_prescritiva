@@ -22,6 +22,7 @@ decisão das equipes técnicas.
 | 4 | RAG e guardrails G0–G5 | ⬜ |
 | 5 | LLM local (Ollama) | ⬜ |
 | 6 | API FastAPI + deploy | ⬜ |
+| 7 | Auditoria: assinatura medida × procedimento descrito | ⬜ |
 
 ## Configuração do ambiente
 
