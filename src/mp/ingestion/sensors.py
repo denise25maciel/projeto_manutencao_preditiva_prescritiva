@@ -182,6 +182,85 @@ def serie_com_eventos(
     return agrupado.sort_values(tempo).reset_index(drop=True)
 
 
+def series_por_evento(
+    leituras: pd.DataFrame,
+    eventos: list[int],
+    colunas: list[str] | None = None,
+    coluna_evento: str = "evento",
+    max_pontos_por_evento: int = 200,
+) -> pd.DataFrame:
+    """Serie de cada evento, padronizada e alinhada, para comparar formas.
+
+    Serve para responder "estes dois eventos se parecem?" olhando, e nao so pelo
+    numero de dispersao.
+
+    Duas decisoes tornam a comparacao possivel:
+
+    **Padronizacao.** Cada coluna e convertida para desvios em relacao a media do
+    arquivo INTEIRO. Sem isso, `rpm` (0 a 3000) e `z_kurtosis` (2 a 65) nao
+    caberiam no mesmo eixo. Usar o arquivo inteiro como regua — e nao cada evento
+    — e o que deixa dois eventos comparaveis entre si.
+
+    **Alinhamento.** O eixo do tempo vira **minutos desde o inicio do evento**.
+    Em data absoluta, cada evento apareceria num ponto diferente da tela e as
+    formas nao poderiam ser sobrepostas mentalmente. A data real de inicio vem
+    junto, na coluna `inicio`, para nao se perder.
+
+    Devolve formato longo: uma linha por (evento, coluna, instante).
+    """
+    tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+    colunas = colunas or [c for c in config.COLUNAS_ASSINATURA if c in leituras.columns]
+
+    vazio = pd.DataFrame(
+        columns=["evento", rotulo, "coluna", "minuto", "valor", "inicio"]
+    )
+    if leituras.empty or not colunas or not eventos:
+        return vazio
+
+    # Regua global: media e desvio de cada coluna sobre todas as leituras.
+    media = leituras[colunas].mean()
+    desvio = leituras[colunas].std().replace(0, 1.0)
+
+    partes = []
+    for ev in eventos:
+        bloco = leituras[leituras[coluna_evento] == ev].sort_values(tempo, kind="stable")
+        if bloco.empty:
+            continue
+
+        fator = max(1, -(-len(bloco) // max_pontos_por_evento))
+        if fator > 1:
+            bloco = bloco.assign(_b=range(len(bloco)))
+            bloco["_b"] //= fator
+            bloco = (
+                bloco.groupby("_b", sort=True)
+                .agg(**{tempo: (tempo, "first"),
+                        rotulo: (rotulo, "first"),
+                        **{c: (c, "median") for c in colunas}})
+                .reset_index(drop=True)
+            )
+
+        inicio = bloco[tempo].iloc[0]
+        padronizado = (bloco[colunas] - media) / desvio
+        padronizado["minuto"] = (
+            (bloco[tempo] - inicio).dt.total_seconds() / 60
+        ).to_numpy()
+
+        longo = padronizado.melt(
+            id_vars="minuto", var_name="coluna", value_name="valor"
+        )
+        longo["evento"] = ev
+        longo[rotulo] = bloco[rotulo].iloc[0]
+        longo["inicio"] = inicio
+        partes.append(longo)
+
+    if not partes:
+        return vazio
+
+    return pd.concat(partes, ignore_index=True)[
+        ["evento", rotulo, "coluna", "minuto", "valor", "inicio"]
+    ]
+
+
 def coesao_eventos(
     leituras: pd.DataFrame, colunas: list[str] | None = None
 ) -> pd.DataFrame:

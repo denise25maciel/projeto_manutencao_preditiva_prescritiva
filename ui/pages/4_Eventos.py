@@ -244,6 +244,132 @@ st.caption(
 st.divider()
 
 # --------------------------------------------------------------------------
+# Um evento por grafico, para comparar formas
+# --------------------------------------------------------------------------
+st.subheader("Um evento abaixo do outro, com todas as medidas")
+
+st.markdown(
+    """
+Aqui cada evento ganha o proprio grafico, com **todas as medidas juntas**. Serve
+para responder olhando: *estes eventos se parecem?*
+
+Duas coisas tornam a comparacao possivel:
+
+- **Todas as medidas na mesma escala.** Cada uma vira "quantos desvios acima ou
+  abaixo da media do arquivo". Sem isso, `rpm` (0 a 3000) e `z_kurtosis` (2 a 65)
+  nao caberiam no mesmo eixo.
+- **Todos os eventos comecam no zero.** O eixo horizontal e o tempo decorrido
+  desde o inicio de cada evento, nao a data. Em data absoluta, cada um apareceria
+  num canto da tela e as formas nao poderiam ser comparadas. A data real de inicio
+  esta no titulo de cada grafico.
+
+**Eventos parecidos tem desenhos parecidos.**
+"""
+)
+
+versao_perfil = st.radio(
+    "Base",
+    [NOME_A, NOME_B],
+    horizontal=True,
+    key="versao_perfil",
+)
+eventos_da_base = eventos_a if versao_perfil == NOME_A else eventos_b
+letra = "A" if versao_perfil == NOME_A else "B"
+
+if eventos_da_base.empty:
+    st.info("Nenhum evento nesta selecao.")
+else:
+    rotulos_evento = {
+        int(r["evento"]): (
+            f"{int(r['evento'])} · {r['fault']} · {r['inicio']:%d/%m %H:%M} · "
+            f"{int(r['n_leituras'])} leituras"
+        )
+        for _, r in eventos_da_base.iterrows()
+    }
+    opcoes_evento = list(rotulos_evento)
+
+    escolhidos = st.multiselect(
+        "Eventos para comparar",
+        opcoes_evento,
+        default=opcoes_evento[:4],
+        max_selections=8,
+        format_func=lambda e: rotulos_evento[e],
+        help="Ate 8. Cada um vira um grafico, um abaixo do outro.",
+    )
+
+    medidas = st.multiselect(
+        "Medidas",
+        numericas,
+        default=[c for c in D.config.COLUNAS_ASSINATURA if c in numericas],
+        help="Por padrao, as medidas que compoem a assinatura de vibracao.",
+    )
+
+    if not escolhidos:
+        st.info("Escolha ao menos um evento.")
+    elif not medidas:
+        st.info("Escolha ao menos uma medida.")
+    else:
+        # Orcamento por grafico: n_medidas x pontos precisa ficar abaixo do
+        # limite de 5000 linhas do Vega.
+        pontos = max(40, min(200, 4000 // max(len(medidas), 1)))
+        perfis = D.r_series_por_evento(
+            letra, tuple(escolhidos), tuple(medidas), pontos
+        )
+
+        if perfis.empty:
+            st.info("Sem dados para estes eventos.")
+        else:
+            # Escala de Y compartilhada: sem isso, cada grafico se ajustaria ao
+            # proprio maximo e formas diferentes pareceriam iguais.
+            lim = float(perfis["valor"].abs().quantile(0.995))
+            dominio = [-lim, lim]
+
+            for ev in escolhidos:
+                d = perfis[perfis["evento"] == ev]
+                if d.empty:
+                    continue
+                info_ev = eventos_da_base[eventos_da_base["evento"] == ev].iloc[0]
+
+                st.markdown(
+                    f"**Evento {ev} · `{info_ev['fault']}`** — "
+                    f"{info_ev['inicio']:%d/%m/%Y %H:%M} · "
+                    f"{int(info_ev['n_leituras'])} leituras · "
+                    f"{info_ev['duracao_min']:.0f} min · "
+                    f"dispersao {info_ev['dispersao']:.2f}"
+                )
+
+                st.altair_chart(
+                    alt.Chart(d)
+                    .mark_line(strokeWidth=1.2, opacity=0.85)
+                    .encode(
+                        x=alt.X("minuto:Q", title="minutos desde o inicio do evento"),
+                        y=alt.Y(
+                            "valor:Q",
+                            title="desvios da media do arquivo",
+                            scale=alt.Scale(domain=dominio, clamp=True),
+                        ),
+                        color=alt.Color("coluna:N", title="medida",
+                                        legend=alt.Legend(orient="right", columns=1)),
+                        tooltip=[
+                            alt.Tooltip("coluna:N", title="medida"),
+                            alt.Tooltip("minuto:Q", title="minuto", format=".1f"),
+                            alt.Tooltip("valor:Q", title="desvios", format=".2f"),
+                        ],
+                    )
+                    .properties(height=240),
+                    width="stretch",
+                )
+
+            st.caption(
+                f"Eixo Y igual em todos os graficos (de {dominio[0]:.1f} a "
+                f"{dominio[1]:.1f} desvios), senao cada um se ajustaria ao proprio "
+                "maximo e formas diferentes pareceriam iguais. A linha em zero e a "
+                "media do arquivo inteiro."
+            )
+
+st.divider()
+
+# --------------------------------------------------------------------------
 # Quando cada evento aconteceu
 # --------------------------------------------------------------------------
 st.subheader("Quando cada evento aconteceu")

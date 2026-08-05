@@ -28,6 +28,7 @@ from mp.ingestion import (  # noqa: E402
     analise_corte_interno,
     comparar_abordagens,
     serie_com_eventos,
+    series_por_evento,
     criterios_limiar,
     campos_pendentes,
     carregar_markdowns,
@@ -266,6 +267,18 @@ def r_serie_com_eventos(versao: str, coluna: str, familias: tuple[str, ...],
         leituras = leituras[familia_da_linha.isin(familias)]
 
     return serie_com_eventos(leituras, coluna, "evento", max_pontos=max_pontos)
+
+
+@st.cache_data(**CACHE)
+def r_series_por_evento(versao: str, eventos: tuple[int, ...],
+                        colunas: tuple[str, ...], max_pontos_por_evento: int = 200):
+    """Serie padronizada de cada evento, alinhada no tempo decorrido."""
+    comp = r_comparar_abordagens()
+    leituras = comp["leituras_a"] if versao == "A" else comp["leituras_b"]
+    return series_por_evento(
+        leituras, list(eventos), list(colunas),
+        max_pontos_por_evento=max_pontos_por_evento,
+    )
 
 
 @st.cache_data(**CACHE)
