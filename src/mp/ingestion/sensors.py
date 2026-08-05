@@ -118,6 +118,63 @@ def construir_eventos_por_rotulo(
     return leituras, eventos
 
 
+def coesao_eventos(
+    leituras: pd.DataFrame, colunas: list[str] | None = None
+) -> pd.DataFrame:
+    """Mede o quanto as leituras de dentro de cada evento se parecem entre si.
+
+    Um agrupamento so faz sentido se o que ele junta for parecido. Se um evento
+    reune leituras muito diferentes, ele juntou coisas que nao deveriam estar
+    juntas — e isso da para medir, nao so argumentar.
+
+    Como e feito:
+
+    1. Cada medida de vibracao e padronizada (subtrai a media, divide pelo desvio)
+       usando o arquivo INTEIRO como referencia. Sem isso, colunas em escalas
+       diferentes — mm/s, graus, Hz — nao poderiam ser somadas.
+    2. Para cada evento, calcula-se o ponto medio das suas leituras.
+    3. A `dispersao` e a distancia media das leituras ate esse ponto medio.
+
+    Dispersao baixa = leituras parecidas entre si = o evento agrupou bem.
+    Dispersao alta  = leituras diferentes no mesmo evento = agrupamento duvidoso.
+
+    A padronizacao usa o arquivo inteiro de proposito: assim o numero de dois
+    agrupamentos diferentes pode ser comparado na mesma regua.
+    """
+    rotulo = config.COLUNA_ROTULO
+    colunas = colunas or [c for c in config.COLUNAS_ASSINATURA if c in leituras.columns]
+    if not colunas or leituras.empty:
+        return pd.DataFrame(columns=["evento", rotulo, "n_leituras", "dispersao"])
+
+    X = leituras[colunas].to_numpy(dtype=float)
+    media = np.nanmean(X, axis=0)
+    desvio = np.nanstd(X, axis=0)
+    desvio[desvio == 0] = 1.0  # coluna constante nao contribui para a distancia
+    Z = np.nan_to_num((X - media) / desvio)
+
+    padronizado = pd.DataFrame(Z, columns=colunas)
+    padronizado["evento"] = leituras["evento"].to_numpy()
+
+    centro = padronizado.groupby("evento")[colunas].transform("mean").to_numpy()
+    distancia = np.sqrt(((Z - centro) ** 2).sum(axis=1))
+
+    saida = pd.DataFrame(
+        {
+            "evento": leituras["evento"].to_numpy(),
+            rotulo: leituras[rotulo].to_numpy(),
+            "_d": distancia,
+        }
+    )
+    resultado = (
+        saida.groupby("evento")
+        .agg(**{rotulo: (rotulo, "first"), "n_leituras": ("_d", "size"),
+                "dispersao": ("_d", "mean")})
+        .reset_index()
+    )
+    resultado["dispersao"] = resultado["dispersao"].round(3)
+    return resultado
+
+
 def comparar_abordagens(df: pd.DataFrame) -> dict:
     """Executa as duas abordagens e mede a diferenca.
 
@@ -132,7 +189,10 @@ def comparar_abordagens(df: pd.DataFrame) -> dict:
     buracos_a = segmentos.maior_buraco_interno(leituras_a, leituras_a["evento"], tempo)
     buracos_b = segmentos.maior_buraco_interno(leituras_b, leituras_b["evento"], tempo)
 
-    def perfil(eventos, buracos, nome):
+    coesao_a = coesao_eventos(leituras_a)
+    coesao_b = coesao_eventos(leituras_b)
+
+    def perfil(eventos, buracos, coesao, nome):
         b = eventos["evento"].map(buracos).fillna(0.0)
         return {
             "abordagem": nome,
@@ -142,12 +202,16 @@ def comparar_abordagens(df: pd.DataFrame) -> dict:
             "com_buraco_1h": int((b > 3600).sum()),
             "maior_buraco_h": float(b.max() / 3600),
             "leituras_por_evento": float(eventos["n_leituras"].median()),
+            "dispersao_mediana": float(coesao["dispersao"].median()),
+            "dispersao_maxima": float(coesao["dispersao"].max()),
         }
 
     resumo = pd.DataFrame(
         [
-            perfil(eventos_a, buracos_a, "A) ordena por data, depois separa por rotulo"),
-            perfil(eventos_b, buracos_b, "B) separa por rotulo, depois ordena por data"),
+            perfil(eventos_a, buracos_a, coesao_a,
+                   "A) ordena por data, depois separa por rotulo"),
+            perfil(eventos_b, buracos_b, coesao_b,
+                   "B) separa por rotulo, depois ordena por data"),
         ]
     )
 
@@ -171,10 +235,16 @@ def comparar_abordagens(df: pd.DataFrame) -> dict:
     mesma_particao = particao(leituras_a) == particao(leituras_b)
 
     return {
-        "eventos_a": eventos_a,
-        "eventos_b": eventos_b,
+        "eventos_a": eventos_a.merge(
+            coesao_a[["evento", "dispersao"]], on="evento", how="left"
+        ),
+        "eventos_b": eventos_b.merge(
+            coesao_b[["evento", "dispersao"]], on="evento", how="left"
+        ),
         "leituras_a": leituras_a,
         "leituras_b": leituras_b,
+        "coesao_a": coesao_a,
+        "coesao_b": coesao_b,
         "resumo": resumo,
         "por_rotulo": por_rotulo,
         "resultado_igual": mesma_particao,

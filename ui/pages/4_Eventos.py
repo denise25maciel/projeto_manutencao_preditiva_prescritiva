@@ -1,7 +1,8 @@
-"""Agrupamento das leituras em eventos.
+"""Teste das duas ordens de operacao para montar eventos.
 
-Primeira tela que TRANSFORMA o dado em vez de so descreve-lo. O que aparece aqui
-e o resultado de `mp.ingestion.sensors`, nao um calculo da propria pagina.
+A pagina e um experimento com duas bases: a esquerda ordena por data antes de
+separar por falha; a direita faz o contrario. Tudo o que nao serve para comparar
+as duas foi para os expansores do fim.
 """
 
 from __future__ import annotations
@@ -14,740 +15,328 @@ import _dados as D
 
 D.configurar_pagina("Eventos", "🧩")
 
-st.title("🧩 Eventos")
-st.caption("Agrupar leituras soltas em ocorrencias contaveis.")
+st.title("🧩 Eventos — teste de duas bases")
 
 st.markdown(
     """
-### O problema
+Um **evento** e uma vez em que a maquina foi medida com o mesmo defeito.
+Agrupar as 166.796 linhas em eventos e o que permite responder *"quantas vezes
+isso aconteceu?"*.
 
-O arquivo tem 166.796 linhas. Se alguem perguntar *"quantas vezes esse defeito
-aconteceu?"*, contar linhas responderia **13.000** para `rolamento_inner`.
-
-Errado. Foram algumas medicoes longas, nao 13 mil falhas.
-
-### A solucao
-
-Agrupar leituras seguidas do mesmo defeito num unico **evento**, com inicio, fim
-e duracao. E o evento que responde "quantas vezes".
-
-### A regra usada aqui
-
-**Um evento novo comeca quando o nome da falha muda.** Nada mais.
+Ha duas ordens possiveis para montar esses eventos. Aqui elas rodam lado a lado,
+sobre o mesmo arquivo.
 """
 )
 
 try:
-    leituras, eventos = D.r_eventos()
+    comp = D.r_comparar_abordagens()
 except FileNotFoundError as e:
     D.aviso_csv_ausente(e)
 
-validacao = D.r_validacao_eventos()
-resumo = D.r_resumo_eventos()
-diagnostico = D.r_diagnostico_eventos()
-bruto = D.dados()
-ordenacao = D.r_ordenacao()
+eventos_a = comp["eventos_a"]
+eventos_b = comp["eventos_b"]
+resumo = comp["resumo"]
+linha_a = resumo.iloc[0]
+linha_b = resumo.iloc[1]
+
+st.divider()
 
 # ==========================================================================
-# 0. Ordenacao — pre-requisito de tudo
+# As duas bases, lado a lado
 # ==========================================================================
-st.header("1. Antes de agrupar: ordenar por data")
+esquerda, direita = st.columns(2, gap="large")
 
-if ordenacao["ja_ordenado"]:
-    st.info("O arquivo ja vem em ordem de data. A ordenacao nao muda nada.")
-else:
-    st.error(
-        f"""
-### O arquivo NAO vem ordenado por data
+with esquerda:
+    st.subheader("🅐 Data → Falha")
+    st.caption(
+        "Ordena o arquivo inteiro por data. Depois percorre de cima a baixo e "
+        "comeca um evento novo quando o nome da falha muda."
+    )
+    st.metric("Eventos", len(eventos_a))
+    a1, a2 = st.columns(2)
+    a1.metric("Maior duracao", f"{linha_a['duracao_maxima_h']:.0f} h")
+    a2.metric("Duracao tipica", f"{linha_a['duracao_mediana_min']:.0f} min")
 
-Esta e a informacao mais importante desta tela.
-
-O `banner.csv` chega com as linhas fora de ordem cronologica. Nao e uma pequena
-bagunca: **{ordenacao['pct_fora_do_lugar']:.0f}% das linhas
-({ordenacao['linhas_fora_do_lugar']:,}) mudam de lugar** quando ordenamos.
-
-A coluna `id` tambem nao esta em ordem.
-
-**Por isso ordenamos por `created_at` antes de qualquer agrupamento.**
-""".replace(",", ".")
+    st.dataframe(
+        eventos_a[["evento", "fault", "n_leituras", "inicio", "duracao_min"]],
+        hide_index=True,
+        height=380,
+        column_config={
+            "evento": st.column_config.NumberColumn("n", format="%d"),
+            "fault": "falha",
+            "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
+            "inicio": st.column_config.DatetimeColumn("comecou", format="DD/MM/YY HH:mm"),
+            "duracao_min": st.column_config.NumberColumn("min", format="%.0f"),
+        },
+    )
+    st.download_button(
+        "Baixar base 🅐",
+        eventos_a.to_csv(index=False).encode("utf-8"),
+        file_name="eventos_A_data_depois_falha.csv",
+        mime="text/csv",
+        key="dl_a",
     )
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Linhas fora do lugar", f"{ordenacao['linhas_fora_do_lugar']:,}".replace(",", "."),
-              f"{ordenacao['pct_fora_do_lugar']:.0f}% do arquivo", delta_color="inverse")
-    c2.metric("Linhas que voltam no tempo", ordenacao["linhas_que_voltam_no_tempo"],
-              help="Linhas cuja data e ANTERIOR a da linha de cima.")
-    c3.metric("Maior salto para tras",
-              f"{abs(ordenacao['maior_salto_para_tras_dias']):.0f} dias")
+with direita:
+    st.subheader("🅑 Falha → Data")
+    st.caption(
+        "Separa as leituras por falha. Depois ordena cada grupo por data. "
+        "Como o nome nao muda dentro do grupo, cada falha vira um evento."
+    )
+    st.metric("Eventos", len(eventos_b))
+    b1, b2 = st.columns(2)
+    b1.metric("Maior duracao", f"{linha_b['duracao_maxima_h']:.0f} h")
+    b2.metric("Duracao tipica", f"{linha_b['duracao_mediana_min']:.0f} min")
 
-    exemplo = D.r_exemplo_desordem()
-    if not exemplo.empty:
-        st.caption(
-            "Duas linhas vizinhas no arquivo, como ele veio. A de baixo e de "
-            "**um mes antes** da de cima:"
-        )
-        st.dataframe(
-            exemplo,
-            hide_index=True,
-            column_config={
-                "posicao_no_arquivo": st.column_config.NumberColumn("linha n", format="%d"),
-                "created_at": st.column_config.DatetimeColumn(
-                    "data e hora", format="DD/MM/YYYY HH:mm:ss"
-                ),
-                "fault": "tipo de falha",
-            },
-        )
-
-    st.warning(
-        f"""
-**O que aconteceria sem ordenar**
-
-Agrupar linhas vizinhas de um arquivo desordenado junta leituras que nao tem
-relacao entre si. Duas linhas coladas no arquivo podem estar a um mes de
-distancia na realidade.
-
-O resultado seriam **{ordenacao['eventos_sem_ordenar']} eventos** em vez de
-{len(eventos)} — e cada um deles misturaria momentos diferentes, com inicio e fim
-sem sentido.
-
-A ordenacao acontece dentro de `construir_eventos`, sempre. Nao depende de o
-arquivo chegar arrumado.
-"""
+    st.dataframe(
+        eventos_b[["evento", "fault", "n_leituras", "inicio", "duracao_min"]],
+        hide_index=True,
+        height=380,
+        column_config={
+            "evento": st.column_config.NumberColumn("n", format="%d"),
+            "fault": "falha",
+            "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
+            "inicio": st.column_config.DatetimeColumn("comecou", format="DD/MM/YY HH:mm"),
+            "duracao_min": st.column_config.NumberColumn("min", format="%.0f"),
+        },
+    )
+    st.download_button(
+        "Baixar base 🅑",
+        eventos_b.to_csv(index=False).encode("utf-8"),
+        file_name="eventos_B_falha_depois_data.csv",
+        mime="text/csv",
+        key="dl_b",
     )
 
 st.divider()
 
 # ==========================================================================
-# 1.1 A ordem das duas operacoes muda o resultado?
+# O resultado do teste
 # ==========================================================================
-st.header("2. A ordem das operacoes importa?")
-
-st.markdown(
-    """
-Ha duas maneiras de montar os eventos, e a primeira vista parecem equivalentes:
-
-- **A)** Ordenar o arquivo inteiro por data, depois quebrar quando o rotulo muda
-- **B)** Separar as leituras por rotulo, depois ordenar cada grupo por data
-
-Rodamos as duas sobre o mesmo arquivo para conferir.
-"""
-)
-
-comp = D.r_comparar_abordagens()
+st.header("As duas dao o mesmo resultado?")
 
 if comp["resultado_igual"]:
-    st.success("As duas abordagens produzem exatamente os mesmos eventos.")
+    st.success("Sim. As duas produzem exatamente os mesmos eventos.")
 else:
     st.error(
         f"""
-### As duas NAO dao o mesmo resultado
+**Nao.** {len(eventos_a)} eventos contra {len(eventos_b)}.
 
-**{len(comp['eventos_a'])} eventos** pela abordagem A contra
-**{len(comp['eventos_b'])} eventos** pela B. Elas discordam em
-**{comp['rotulos_que_divergem']} rotulos**.
+A diferenca aparece quando a **mesma falha foi medida em dias diferentes**:
+
+- Na 🅐, entre as duas medicoes ha leituras de outras falhas. Elas cortam, e
+  saem **dois** eventos.
+- Na 🅑, as duas medicoes estao no mesmo grupo e nada as separa. Sai **um** evento
+  so, cobrindo o periodo inteiro.
 """
     )
 
-st.dataframe(
-    comp["resumo"],
-    hide_index=True,
-    column_config={
-        "abordagem": st.column_config.TextColumn("abordagem", width="large"),
-        "eventos": st.column_config.NumberColumn("eventos", format="%d"),
-        "duracao_mediana_min": st.column_config.NumberColumn(
-            "duracao tipica (min)", format="%.1f"
-        ),
-        "duracao_maxima_h": st.column_config.NumberColumn(
-            "duracao maxima", format="%.0f h"
-        ),
-        "com_buraco_1h": st.column_config.NumberColumn(
-            "eventos com buraco > 1 h", format="%d"
-        ),
-        "maior_buraco_h": st.column_config.NumberColumn("maior buraco", format="%.0f h"),
-        "leituras_por_evento": st.column_config.NumberColumn(
-            "leituras por evento", format="%.0f"
-        ),
-    },
-)
+    pior = eventos_b.loc[eventos_b["duracao_s"].idxmax()]
+    st.warning(
+        f"""
+**Exemplo concreto.** Na base 🅑, a falha `{pior['fault']}` vira **um evento**
+que comeca em {pior['inicio']:%d/%m} e termina em {pior['fim']:%d/%m} —
+**{pior['duracao_s'] / 86400:.0f} dias** de "duracao".
 
-st.markdown("#### Por que elas divergem")
-
-st.markdown(
-    """
-Na abordagem **B**, cada grupo tem **um rotulo so**. Se o rotulo nunca muda dentro
-do grupo, nunca ha quebra — entao **cada rotulo vira um unico evento**, mesmo que
-tenha sido medido em maio e de novo em junho.
-
-Na abordagem **A**, entre as duas medicoes do mesmo rotulo existem leituras de
-outros rotulos. Sao elas que provocam a quebra, e os dois trechos viram eventos
-separados.
+A maquina nao ficou {pior['duracao_s'] / 86400:.0f} dias sendo medida sem parar.
 """
-)
-
-pior_b = comp["eventos_b"].loc[comp["eventos_b"]["duracao_s"].idxmax()]
-eventos_a_do_rotulo = int(
-    comp["por_rotulo"].loc[
-        comp["por_rotulo"]["fault"] == pior_b["fault"], "eventos_A"
-    ].iloc[0]
-)
-
-st.warning(
-    f"""
-**O efeito disso, num caso real.**
-
-Pela abordagem B, o rotulo `{pior_b['fault']}` vira **um unico evento** com
-{int(pior_b['n_leituras']):,} leituras, comecando em {pior_b['inicio']:%d/%m/%Y} e
-terminando em {pior_b['fim']:%d/%m/%Y}.
-
-Isso da uma "duracao" de **{pior_b['duracao_s'] / 3600:.0f} horas**, ou
-{pior_b['duracao_s'] / 86400:.0f} dias. A maquina nao ficou 40 dias sendo medida
-sem parar.
-
-Pela abordagem A, o mesmo rotulo vira **{eventos_a_do_rotulo} eventos** separados,
-cada um com sua data.
-""".replace(",", ".")
-)
-
-st.caption(
-    "Os rotulos em que as duas discordam. `diferenca` e quantos eventos a "
-    "abordagem A enxerga a mais."
-)
-st.dataframe(
-    comp["por_rotulo"][comp["por_rotulo"]["diferenca"] != 0],
-    hide_index=True,
-    height=320,
-    column_config={
-        "fault": "tipo de falha",
-        "eventos_A": st.column_config.NumberColumn("A (ordena antes)", format="%d"),
-        "eventos_B": st.column_config.NumberColumn("B (separa antes)", format="%d"),
-        "diferenca": st.column_config.NumberColumn("diferenca", format="%d"),
-    },
-)
-
-st.info(
-    """
-### A conclusao
-
-**Usamos a abordagem A.** Ordenar por data primeiro e o que permite perceber que o
-mesmo defeito foi medido em momentos distintos.
-
-A abordagem B nao esta errada por acaso — ela responde a outra pergunta. Ela diz
-*"em que periodo esse rotulo aparece no arquivo"*, e nao *"quantas vezes ele foi
-medido"*. Para contar ocorrencias, so a A serve.
-"""
-)
+    )
 
 st.divider()
 
 # ==========================================================================
-# 1. Antes e depois
+# Similaridade dentro de cada evento
 # ==========================================================================
-st.header("3. O que mudou")
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Linhas no arquivo", f"{len(bruto):,}".replace(",", "."))
-c2.metric("Eventos", f"{len(eventos):,}".replace(",", "."))
-c3.metric("Reducao", f"{len(bruto) / max(len(eventos), 1):.0f}x")
-c4.metric("Leituras por evento", f"{eventos['n_leituras'].median():.0f}",
-          help="Valor tipico.")
-
-st.caption(
-    "Nenhuma leitura foi apagada. Todas continuam la — agora sabendo a qual "
-    "evento pertencem."
-)
-
-# ==========================================================================
-# 2. Validacao
-# ==========================================================================
-st.header("4. O agrupamento esta correto?")
+st.header("As leituras de cada evento se parecem entre si?")
 
 st.markdown(
-    "Cinco checagens que ou passam ou falham. Se alguma falhar, o resultado "
-    "abaixo nao vale."
+    """
+Um agrupamento so vale se o que ele junta for parecido. Se um evento reune
+leituras muito diferentes, ele juntou o que nao deveria.
+
+Medimos assim: todas as medidas de vibracao sao colocadas na mesma escala, e para
+cada evento calculamos **o quanto suas leituras se afastam do proprio centro**.
+
+- **Numero baixo** → leituras parecidas → agrupou bem
+- **Numero alto** → leituras diferentes no mesmo evento → agrupou mal
+"""
 )
 
-todas_ok = bool(validacao["passou"].all())
-if todas_ok:
-    st.success(f"**As {len(validacao)} checagens passaram.**")
-else:
-    st.error("**Alguma checagem falhou.** Nao usar o resultado.")
-
-st.dataframe(
-    validacao,
-    hide_index=True,
-    column_config={
-        "checagem": st.column_config.TextColumn("checagem", width="large"),
-        "passou": st.column_config.CheckboxColumn("ok?"),
-        "detalhe": st.column_config.TextColumn("detalhe", width="medium"),
-    },
+s1, s2 = st.columns(2)
+s1.metric(
+    "🅐 Data → Falha",
+    f"{linha_a['dispersao_mediana']:.2f}",
+    help="Dispersao tipica dentro dos eventos. Menor e melhor.",
+)
+s2.metric(
+    "🅑 Falha → Data",
+    f"{linha_b['dispersao_mediana']:.2f}",
+    f"{(linha_b['dispersao_mediana'] / linha_a['dispersao_mediana'] - 1) * 100:+.0f}% pior",
+    delta_color="inverse",
 )
 
-# ==========================================================================
-# 3. Quantas vezes cada falha aconteceu
-# ==========================================================================
-st.header("5. Quantas vezes cada falha aconteceu")
-
-st.markdown("Esta e a tabela que responde a pergunta do operador.")
-
-st.dataframe(
-    resumo[
-        ["fault", "eventos", "leituras", "leituras_por_evento",
-         "duracao_mediana_min", "duracao_total_h", "primeira", "ultima"]
-    ],
-    hide_index=True,
-    height=420,
-    column_config={
-        "fault": "tipo de falha",
-        "eventos": st.column_config.NumberColumn("ocorrencias", format="%d"),
-        "leituras": st.column_config.NumberColumn("leituras", format="%d"),
-        "leituras_por_evento": st.column_config.NumberColumn(
-            "leituras por ocorrencia", format="%.0f"
-        ),
-        "duracao_mediana_min": st.column_config.NumberColumn(
-            "duracao tipica (min)", format="%.0f"
-        ),
-        "duracao_total_h": st.column_config.NumberColumn("horas no total", format="%.1f"),
-        "primeira": st.column_config.DatetimeColumn("primeira vez", format="DD/MM/YY HH:mm"),
-        "ultima": st.column_config.DatetimeColumn("ultima vez", format="DD/MM/YY HH:mm"),
-    },
-)
-
-st.caption("Comparacao entre contar linhas e contar ocorrencias:")
-
-top = resumo.head(15)
 comparativo = pd.concat(
     [
-        top[["fault", "leituras"]].rename(columns={"leituras": "quantidade"}).assign(
-            medida="contando linhas"
-        ),
-        top[["fault", "eventos"]].rename(columns={"eventos": "quantidade"}).assign(
-            medida="contando ocorrencias"
-        ),
+        comp["coesao_a"][["dispersao"]].assign(base="🅐 Data → Falha"),
+        comp["coesao_b"][["dispersao"]].assign(base="🅑 Falha → Data"),
     ]
 )
 
 st.altair_chart(
     alt.Chart(comparativo)
-    .mark_bar()
+    .mark_boxplot(extent="min-max", size=40)
     .encode(
-        x=alt.X("quantidade:Q", title="quantidade", scale=alt.Scale(type="symlog")),
-        y=alt.Y("fault:N", sort=list(top["fault"]), title=None),
+        x=alt.X("dispersao:Q", title="dispersao dentro do evento (menor = melhor)",
+                scale=alt.Scale(type="symlog")),
+        y=alt.Y("base:N", title=None),
         color=alt.Color(
-            "medida:N", title=None,
-            scale=alt.Scale(domain=["contando linhas", "contando ocorrencias"],
-                            range=["#b0b0b0", "#d1495b"]),
-            legend=alt.Legend(orient="bottom"),
+            "base:N", legend=None,
+            scale=alt.Scale(domain=["🅐 Data → Falha", "🅑 Falha → Data"],
+                            range=["#2d6a4f", "#d1495b"]),
         ),
-        yOffset="medida:N",
-        tooltip=["fault", "medida", "quantidade"],
     )
-    .properties(height=36 * len(top)),
+    .properties(height=180),
     width="stretch",
 )
 
-# ==========================================================================
-# 4. A lista de eventos
-# ==========================================================================
-st.header("6. Todos os eventos")
-
-filtro = st.multiselect(
-    "Filtrar por tipo de falha",
-    sorted(eventos["fault"].dropna().unique()),
-    default=[],
-    help="Deixe vazio para ver todos.",
-)
-vis = eventos[eventos["fault"].isin(filtro)] if filtro else eventos
-
-st.caption(f"{len(vis)} de {len(eventos)} eventos.")
-st.dataframe(
-    vis[["evento", "fault", "n_leituras", "inicio", "fim", "duracao_min"]],
-    hide_index=True,
-    height=420,
-    column_config={
-        "evento": st.column_config.NumberColumn("n", format="%d"),
-        "fault": "tipo de falha",
-        "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
-        "inicio": st.column_config.DatetimeColumn("comecou", format="DD/MM/YY HH:mm:ss"),
-        "fim": st.column_config.DatetimeColumn("terminou", format="DD/MM/YY HH:mm:ss"),
-        "duracao_min": st.column_config.NumberColumn("duracao (min)", format="%.1f"),
-    },
-)
-
-st.download_button(
-    "Baixar os eventos em CSV",
-    eventos.to_csv(index=False).encode("utf-8"),
-    file_name="eventos.csv",
-    mime="text/csv",
-)
-
-# ==========================================================================
-# 5. O custo de usar so o rotulo
-# ==========================================================================
-st.header("7. O que esta regra deixa passar")
-
-_, eventos_10s = D.r_eventos(10.0)
-
-st.markdown(
+st.info(
     f"""
-A regra atual quebra o evento **so quando o nome da falha muda**. Ela nao percebe
-quando a coleta simplesmente parou e recomecou depois, com o mesmo nome.
+A base 🅑 tem dispersao **{(linha_b['dispersao_mediana'] / linha_a['dispersao_mediana'] - 1) * 100:.0f}% maior**.
 
-Quando isso acontece, duas medicoes distantes viram um evento so.
+Faz sentido: ao juntar medicoes feitas com semanas de diferenca, ela mistura
+leituras que nao se parecem — a maquina nao estava no mesmo estado.
 """
 )
 
-d1, d2, d3 = st.columns(3)
-d1.metric("Eventos com a regra atual", len(eventos))
-d2.metric("Eventos incluindo pausas de 10 s", len(eventos_10s))
-d3.metric(
-    "Eventos com buraco interno", len(diagnostico),
-    f"{len(diagnostico) / max(len(eventos), 1) * 100:.0f}% do total",
-    delta_color="inverse",
-)
-
-if len(diagnostico):
-    pior = diagnostico.iloc[0]
-    st.warning(
-        f"""
-**O caso mais extremo:** o evento {int(pior['evento'])} (`{pior['fault']}`) aparece
-com **{pior['duracao_min'] / 60:.0f} horas de duracao** — mas tem
-**{pior['maior_buraco_h']:.0f} horas seguidas sem nenhuma leitura** por dentro.
-
-Nao foi uma medicao de {pior['duracao_min'] / 60:.0f} horas. Foram duas medicoes
-separadas por {pior['maior_buraco_h']:.0f} horas, que a regra juntou porque o nome
-da falha nao mudou entre elas.
-"""
-    )
-
+with st.expander("Os eventos com leituras mais diferentes entre si"):
     st.caption(
-        "Os eventos com interrupcao interna maior que 1 minuto. **Atencao as "
-        "unidades:** a duracao esta em HORAS e a maior pausa tambem, para poderem "
-        "ser comparadas na mesma linha."
+        "Valem atencao independentemente da base escolhida: sao eventos em que a "
+        "vibracao variou muito durante a propria medicao."
     )
-    tabela_diag = diagnostico.copy()
-    tabela_diag["duracao_h"] = (tabela_diag["duracao_min"] / 60).round(1)
-
     st.dataframe(
-        tabela_diag[
-            ["evento", "fault", "n_leituras", "inicio", "fim",
-             "duracao_h", "maior_buraco_h"]
+        eventos_a.nlargest(15, "dispersao")[
+            ["evento", "fault", "n_leituras", "inicio", "duracao_min", "dispersao"]
         ],
         hide_index=True,
-        height=380,
         column_config={
             "evento": st.column_config.NumberColumn("n", format="%d"),
-            "fault": "tipo de falha",
+            "fault": "falha",
             "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
             "inicio": st.column_config.DatetimeColumn("comecou", format="DD/MM/YY HH:mm"),
-            "fim": st.column_config.DatetimeColumn("terminou", format="DD/MM/YY HH:mm"),
-            "duracao_h": st.column_config.NumberColumn(
-                "duracao total (horas)", format="%.1f h",
-                help="Do inicio ao fim do evento, incluindo as pausas de dentro."
-            ),
-            "maior_buraco_h": st.column_config.NumberColumn(
-                "maior pausa (horas)", format="%.1f h",
-                help="A maior interrupcao sem nenhuma leitura, dentro do evento."
-            ),
+            "duracao_min": st.column_config.NumberColumn("duracao (min)", format="%.0f"),
+            "dispersao": st.column_config.NumberColumn("dispersao", format="%.1f"),
         },
     )
-
-st.info(
-    """
-**Isto esta aqui de proposito, nao e um defeito escondido.**
-
-A decisao foi comecar so com o rotulo. O codigo ja aceita a regra de tempo — ela
-esta pronta e desligada. Ligar e trocar um parametro.
-
-A tela mostra o custo para a escolha continuar sendo informada.
-"""
-)
-
-# --------------------------------------------------------------------------
-# 6.1 Como o corte por tempo agiria
-# --------------------------------------------------------------------------
-st.subheader("Se ligassemos o corte por tempo, onde ele cairia")
-
-corte = D.r_analise_corte()
-est = corte["estatisticas"]
-vazio = corte["vazio"]
-
-st.markdown(
-    """
-Aqui olhamos **so os intervalos que existem dentro dos eventos atuais** — o tempo
-entre uma leitura e a seguinte, sem atravessar a fronteira de um evento para outro.
-
-Se um dia decidirmos cortar tambem por tempo, e nestes intervalos que o corte agiria.
-"""
-)
-
-e1, e2, e3, e4 = st.columns(4)
-e1.metric("Menor intervalo", f"{est['minimo_s']:.1f} s")
-e2.metric("Intervalo tipico", f"{est['mediana_s']:.1f} s")
-e3.metric("Intervalo medio", f"{est['media_s']:.1f} s")
-e4.metric("Maior intervalo", f"{est['maximo_s'] / 3600:.0f} h")
-
-st.caption(
-    f"Sobre {est['n']:,} intervalos.".replace(",", ".")
-    + " O tipico e 2 segundos, mas a media e 16 — sinal de que ha dois grupos "
-    "misturados."
-)
-
-faixas = corte["faixas"].copy()
-faixas["faixa"] = [
-    f"{a:.0f} a {b:.0f} s" if b != float("inf") else f"mais de {a:.0f} s"
-    for a, b in zip(faixas["de_s"], faixas["ate_s"])
-]
-
-st.altair_chart(
-    alt.Chart(faixas)
-    .mark_bar()
-    .encode(
-        x=alt.X("faixa:N", sort=list(faixas["faixa"]), title="intervalo entre leituras",
-                axis=alt.Axis(labelAngle=-40)),
-        y=alt.Y("intervalos:Q", title="quantas vezes", scale=alt.Scale(type="symlog")),
-        color=alt.Color(
-            "vazia:N", title=None,
-            scale=alt.Scale(domain=[False, True], range=["#4c78a8", "#d1495b"]),
-            legend=alt.Legend(labelExpr="datum.label == 'true' ? 'faixa vazia' : 'com dados'"),
-        ),
-        tooltip=["faixa", "intervalos"],
-    )
-    .properties(height=280),
-    width="stretch",
-)
-
-if vazio.get("centro_s"):
-    st.success(
-        f"""
-**Os dois grupos nao se tocam.**
-
-- Coleta continua: ate **{vazio['maior_continuo_s']:.0f} segundos**
-- Pausas de verdade: a partir de **{vazio['menor_pausa_s']:.0f} segundos**
-- Entre os dois: **nenhuma ocorrencia**
-
-Sao **{vazio['n_pausas']} pausas** escondidas dentro dos {corte['eventos_atuais']}
-eventos atuais. Qualquer corte entre {vazio['maior_continuo_s']:.0f} e
-{vazio['menor_pausa_s']:.0f} segundos pegaria exatamente essas — nem uma a mais,
-nem uma a menos.
-"""
+    st.caption(
+        "Repare no padrao: os tres primeiros terminam em `_pos_2` — o sensor "
+        "estava em outra posicao. Nao e defeito do agrupamento, e a montagem que "
+        "mudou durante a campanha."
     )
 
-st.markdown("#### Deixando a estatistica escolher o numero")
+st.divider()
 
-criterios, saltos = D.r_criterios_limiar()
-
-st.markdown(
+st.success(
     """
-Ate aqui o limiar veio de olhar o grafico. Isso e fragil — outra pessoa olharia e
-escolheria outro numero.
+### Conclusao
 
-Abaixo, cinco criterios que calculam o limiar **sozinhos**, sem ninguem escolher.
-Estao todos aqui, inclusive os que **nao funcionam** — mostrar so o que confirma a
-conclusao seria escolher a dedo.
+**Usamos a base 🅐 (data → falha).** Ela conta ocorrencias; a 🅑 conta periodos.
+
+Para responder *"quantas vezes esse defeito ja apareceu"*, so a 🅐 serve — e a
+medida de similaridade confirma que ela tambem agrupa leituras mais parecidas.
 """
 )
 
-tabela_crit = criterios.copy()
-tabela_crit["eventos"] = tabela_crit["cortes_que_faria"] + corte["eventos_atuais"]
+# ==========================================================================
+# Detalhes, fora do caminho principal
+# ==========================================================================
+st.divider()
+st.caption("Verificacoes e diagnosticos. Abra se quiser conferir.")
 
-st.markdown(
-    """
-As colunas do meio respondem **onde exatamente o corte cairia**:
-
-- **passa ate** — o maior intervalo que o criterio deixaria intacto
-- **corta a partir de** — o menor intervalo que ele quebraria
-- **folga** — a distancia entre os dois
-
-A folga e o que revela se o limiar e solido. Folga grande significa que ele caiu
-num vazio: da para move-lo para os lados sem mudar nada. Folga zero significa que
-ele caiu **dentro** de um amontoado de valores iguais, cortando ao meio o que
-deveria ficar junto.
-"""
-)
-
-st.dataframe(
-    tabela_crit[
-        ["criterio", "valor_s", "maior_que_passa_s", "menor_que_corta_s",
-         "folga_s", "cortes_que_faria", "eventos", "observacao"]
-    ],
-    hide_index=True,
-    column_config={
-        "criterio": st.column_config.TextColumn("criterio", width="medium"),
-        "valor_s": st.column_config.NumberColumn("limiar", format="%.3f s"),
-        "maior_que_passa_s": st.column_config.NumberColumn(
-            "passa ate", format="%.3f s",
-            help="Maior intervalo que este limiar NAO corta."
-        ),
-        "menor_que_corta_s": st.column_config.NumberColumn(
-            "corta a partir de", format="%.3f s",
-            help="Menor intervalo que este limiar corta."
-        ),
-        "folga_s": st.column_config.NumberColumn(
-            "folga", format="%.3f s",
-            help="Vazio em volta do limiar. Quanto maior, mais solido."
-        ),
-        "cortes_que_faria": st.column_config.NumberColumn("cortes", format="%d"),
-        "eventos": st.column_config.NumberColumn("eventos resultantes", format="%d"),
-        "observacao": st.column_config.TextColumn("por que", width="large"),
-    },
-)
-
-st.markdown(
-    """
-**Lendo a coluna folga:**
-
-| Criterio | Passa ate | Corta a partir de | Folga |
-|---|---|---|---|
-| Tukey e MAD | 2,000 s | 2,000 s | **0,000 s** |
-| Percentil 99,8 | 22,505 s | 22,533 s | **0,028 s** |
-| Maior salto relativo | 6,000 s | 16,085 s | **10,085 s** |
-
-Tukey e MAD cortam **no meio dos 2 segundos** — o intervalo mais comum do arquivo.
-Deixam passar um de 2,000 s e cortam outro de 2,000 s. Nao ha criterio nenhum ali,
-so o acaso do arredondamento.
-
-O percentil corta entre 22,505 e 22,533 s: 28 milesimos de folga. Mover o limiar
-um pouquinho muda o resultado.
-
-O maior salto corta entre 6,000 e 16,085 s: **10 segundos de folga**. Qualquer
-valor nesse intervalo da o mesmo resultado.
-"""
-)
-
-st.warning(
-    """
-**Tres dos cinco criterios desabam — e pelo mesmo motivo.**
-
-Tukey e MAD medem "o quanto os valores se espalham". Mas aqui a esmagadora maioria
-das leituras tem **exatamente o mesmo intervalo de 2 segundos**. O espalhamento e
-praticamente nulo: o IQR vale 0,0003 s e o MAD, 0,0000 s.
-
-Com espalhamento quase zero, os tres devolvem ~2 segundos. Repare na coluna
-*cortes*: fariam mais de 10 mil cortes, partindo a cadencia normal em pedacos.
-
-Nao e defeito dos criterios. Eles pressupoem uma distribuicao que se espalha, e
-esta nao se espalha: sao dois blocos rigidos com um vazio no meio.
-"""
-)
-
-st.caption(
-    "O percentil 99,8 nao desaba, mas erra por outro lado: corta em 22,5 s e "
-    "**deixa passar 31 pausas reais** (334 cortes em vez de 365). Ele cai depois "
-    "do vazio, ja dentro do grupo das pausas."
-)
-
-if not saltos.empty:
-    st.markdown("**O criterio que funciona: a maior descontinuidade**")
+with st.expander("O arquivo nao vem ordenado por data"):
+    ordenacao = D.r_ordenacao()
     st.markdown(
-        """
-Em vez de medir espalhamento, este procura o **maior salto** entre dois valores
-consecutivos da lista ordenada. Onde a distribuicao mais se rompe, ali esta a
-fronteira.
-"""
-    )
-    st.dataframe(
-        saltos,
-        hide_index=True,
-        column_config={
-            "de_s": st.column_config.NumberColumn("de", format="%.3f s"),
-            "para_s": st.column_config.NumberColumn("para", format="%.3f s"),
-            "salto": st.column_config.NumberColumn("salto", format="%.1f x"),
-            "ponto_medio_s": st.column_config.NumberColumn("meio do salto", format="%.2f s"),
-        },
-    )
-    st.success(
         f"""
-**O maior salto de toda a distribuicao e de {saltos.iloc[0]['de_s']:.0f} s para
-{saltos.iloc[0]['para_s']:.1f} s — um pulo de {saltos.iloc[0]['salto']:.1f} vezes.**
+O `banner.csv` chega fora de ordem cronologica: **{ordenacao['pct_fora_do_lugar']:.0f}%
+das linhas** ({ordenacao['linhas_fora_do_lugar']:,}) mudam de lugar ao ordenar. A
+coluna `id` tambem esta fora de ordem.
 
-Ele e maior que os saltos entre pausas de horas e de dias, que aparecem logo
-abaixo na tabela. Ou seja: a separacao entre "gravando" e "parado" e a
-descontinuidade mais forte que existe nestes dados.
-
-O meio desse salto e **{saltos.iloc[0]['ponto_medio_s']:.1f} segundos** — que e
-exatamente o valor que escolhemos olhando o grafico, agora obtido sem olhar nada.
-"""
-    )
-
-st.markdown("**Simulacao: o que cada corte faria com os eventos de hoje**")
-
-sim = corte["simulacao"]
-st.dataframe(
-    sim[["corte_s", "eventos", "eventos_partidos", "pct_eventos_partidos"]],
-    hide_index=True,
-    column_config={
-        "corte_s": st.column_config.NumberColumn("corte (segundos)", format="%.1f s"),
-        "eventos": st.column_config.NumberColumn("eventos resultantes", format="%d"),
-        "eventos_partidos": st.column_config.NumberColumn(
-            "eventos que se partiriam", format="%d",
-            help=f"Dos {corte['eventos_atuais']} eventos atuais."
-        ),
-        "pct_eventos_partidos": st.column_config.NumberColumn(
-            "% dos atuais", format="%.0f%%"
-        ),
-    },
-)
-
-st.altair_chart(
-    alt.Chart(sim)
-    .mark_line(point=True, strokeWidth=2, color="#d1495b")
-    .encode(
-        x=alt.X("corte_s:Q", title="corte usado (segundos)", scale=alt.Scale(type="log")),
-        y=alt.Y("eventos:Q", title="eventos resultantes", scale=alt.Scale(type="log")),
-        tooltip=[alt.Tooltip("corte_s:Q", title="corte (s)"), "eventos",
-                 "eventos_partidos"],
-    )
-    .properties(height=280),
-    width="stretch",
-)
-
-st.info(
-    f"""
-### Como ler
-
-**Corte de 2,5 ou 5 segundos → 11 mil eventos.** Errado. Parte das leituras vem a
-cada 5,3 segundos, e um corte abaixo disso parte cada medicao em centenas de pedacos.
-
-**Corte de 8, 10 ou 15 segundos → 570 eventos, sempre o mesmo.** Sao os
-{corte['eventos_atuais']} de hoje mais as {vazio.get('n_pausas', 0)} pausas internas.
-Tres valores diferentes, um unico resultado — porque todos caem na faixa vazia.
-
-**Corte de 60 segundos → 366 eventos.** Ja deixa passar mais da metade das pausas.
-
-### Se a decisao mudar
-
-O numero a usar seria **10 segundos**, o centro da faixa vazia. E o que esta
-documentado em `config.GAP_NOVO_EPISODIO_S`, pronto para quando quiser ligar.
-"""
-)
-
-# ==========================================================================
-# 6. Pendencia P1
-# ==========================================================================
-zero = eventos[eventos["duracao_s"] == 0]
-if len(zero):
-    st.header("8. Um evento impossivel")
-    st.error(
-        f"""
-Existe **{len(zero)} evento com duracao zero** e
-{int(zero.iloc[0]['n_leituras']):,} leituras dentro.
-
-E o bloco de `{zero.iloc[0]['fault']}` em que todas as leituras receberam a mesma
-data e hora — a pendencia **P1**, detalhada na tela *Qualidade dos Dados*.
-
-Mil medicoes num unico instante e fisicamente impossivel. O erro esta no dado, nao
-no agrupamento. Fica marcado, nao corrigido.
+Por isso as duas abordagens ordenam por data — a diferenca entre elas e **quando**
+isso acontece, nao **se** acontece.
 """.replace(",", ".")
     )
+    exemplo = D.r_exemplo_desordem()
+    if not exemplo.empty:
+        st.caption("Duas linhas vizinhas no arquivo. A de baixo e de um mes antes:")
+        st.dataframe(
+            exemplo,
+            hide_index=True,
+            column_config={
+                "posicao_no_arquivo": st.column_config.NumberColumn("linha", format="%d"),
+                "created_at": st.column_config.DatetimeColumn(
+                    "data e hora", format="DD/MM/YYYY HH:mm:ss"
+                ),
+                "fault": "falha",
+            },
+        )
+
+with st.expander("Verificacoes do agrupamento"):
+    validacao = D.r_validacao_eventos()
+    if bool(validacao["passou"].all()):
+        st.success(f"As {len(validacao)} verificacoes passaram.")
+    else:
+        st.error("Alguma verificacao falhou.")
     st.dataframe(
-        zero[["evento", "fault", "n_leituras", "inicio", "fim", "duracao_min"]],
+        validacao,
         hide_index=True,
         column_config={
-            "evento": st.column_config.NumberColumn("n", format="%d"),
-            "fault": "tipo de falha",
-            "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
-            "inicio": st.column_config.DatetimeColumn("comecou", format="DD/MM/YY HH:mm:ss"),
-            "fim": st.column_config.DatetimeColumn("terminou", format="DD/MM/YY HH:mm:ss"),
-            "duracao_min": st.column_config.NumberColumn("duracao (min)", format="%.1f"),
+            "checagem": st.column_config.TextColumn("verificacao", width="large"),
+            "passou": st.column_config.CheckboxColumn("ok?"),
+            "detalhe": st.column_config.TextColumn("detalhe", width="medium"),
         },
     )
+
+with st.expander("Em quais falhas as duas bases discordam"):
+    st.dataframe(
+        comp["por_rotulo"][comp["por_rotulo"]["diferenca"] != 0],
+        hide_index=True,
+        height=320,
+        column_config={
+            "fault": "falha",
+            "eventos_A": st.column_config.NumberColumn("🅐", format="%d"),
+            "eventos_B": st.column_config.NumberColumn("🅑", format="%d"),
+            "diferenca": st.column_config.NumberColumn("diferenca", format="%d"),
+        },
+    )
+
+with st.expander("Quantas vezes cada falha aconteceu (base 🅐)"):
+    st.dataframe(
+        D.r_resumo_eventos()[
+            ["fault", "eventos", "leituras", "duracao_mediana_min", "primeira", "ultima"]
+        ],
+        hide_index=True,
+        height=400,
+        column_config={
+            "fault": "falha",
+            "eventos": st.column_config.NumberColumn("ocorrencias", format="%d"),
+            "leituras": st.column_config.NumberColumn("leituras", format="%d"),
+            "duracao_mediana_min": st.column_config.NumberColumn(
+                "duracao tipica (min)", format="%.0f"
+            ),
+            "primeira": st.column_config.DatetimeColumn("primeira", format="DD/MM/YY"),
+            "ultima": st.column_config.DatetimeColumn("ultima", format="DD/MM/YY"),
+        },
+    )
+
+zero = eventos_a[eventos_a["duracao_s"] == 0]
+if len(zero):
+    with st.expander("Um evento com duracao zero (pendencia conhecida)"):
+        st.markdown(
+            f"""
+Um evento de `{zero.iloc[0]['fault']}` tem
+{int(zero.iloc[0]['n_leituras']):,} leituras e **duracao zero**: todas receberam a
+mesma data e hora no arquivo original.
+
+Mil medicoes num unico instante e impossivel. O erro esta no dado, nao no
+agrupamento. Fica marcado, nao corrigido — detalhes na tela *Qualidade dos Dados*.
+""".replace(",", ".")
+        )
