@@ -162,16 +162,95 @@ st.divider()
 # ==========================================================================
 st.header("Os eventos na linha do tempo")
 
-st.markdown(
-    "Cada barra e um evento, do inicio ao fim. Verde e a base 🅐, vermelho a 🅑. "
-    "Onde a barra vermelha e longa e a verde e curta, as duas discordam."
-)
-
 bases_visiveis = st.multiselect(
     "Bases no grafico",
     [NOME_A, NOME_B],
     default=[NOME_A, NOME_B],
     help="Desmarque uma para ver a outra sozinha.",
+)
+
+# --------------------------------------------------------------------------
+# A serie medida, com a divisao em eventos por cima
+# --------------------------------------------------------------------------
+st.subheader("A medida ao longo do tempo, dividida em eventos")
+
+st.markdown(
+    """
+Aqui esta o **dado medido**, nao so quando o evento aconteceu. Cada ponto e uma
+leitura do sensor; a linha muda de tom a cada evento novo.
+
+E onde a diferenca entre as duas bases fica evidente: a mesma curva, cortada de
+formas diferentes.
+"""
+)
+
+numericas = D.r_numericas()
+padrao_col = (
+    "z_rms_velocity_mm_s" if "z_rms_velocity_mm_s" in numericas else numericas[0]
+)
+coluna_medida = st.selectbox(
+    "Medida", numericas, index=numericas.index(padrao_col)
+)
+
+TONS = {
+    NOME_A: ["#2d6a4f", "#95d5b2"],   # verde escuro / verde claro
+    NOME_B: ["#d1495b", "#f4a3ac"],   # vermelho escuro / vermelho claro
+}
+chave_familias = tuple(sorted(filtro))
+
+for nome, versao in ((NOME_A, "A"), (NOME_B, "B")):
+    if nome not in bases_visiveis:
+        continue
+
+    serie = D.r_serie_com_eventos(versao, coluna_medida, chave_familias)
+    if serie.empty:
+        continue
+
+    n_eventos_serie = serie["evento"].nunique()
+    st.markdown(f"**{nome}** — {n_eventos_serie} eventos nesta selecao")
+
+    st.altair_chart(
+        alt.Chart(serie)
+        .mark_line(strokeWidth=1.6)
+        .encode(
+            x=alt.X("created_at:T", title="data e hora da coleta (UTC)"),
+            y=alt.Y("valor:Q", title=coluna_medida, scale=alt.Scale(zero=False)),
+            # `detail` quebra a linha entre eventos; `color` alterna o tom para
+            # a fronteira ficar visivel mesmo quando os eventos sao colados.
+            detail=alt.Detail("evento:N"),
+            color=alt.Color(
+                "paridade:N",
+                legend=None,
+                scale=alt.Scale(domain=[0, 1], range=TONS[nome]),
+            ),
+            tooltip=[
+                alt.Tooltip("fault:N", title="falha"),
+                alt.Tooltip("evento:Q", title="evento n"),
+                alt.Tooltip("created_at:T", title="quando",
+                            format="%d/%m/%Y %H:%M:%S"),
+                alt.Tooltip("valor:Q", title=coluna_medida, format=".4f"),
+            ],
+        )
+        .properties(height=280)
+        .interactive(),
+        width="stretch",
+    )
+
+st.caption(
+    "Os tons alternam a cada evento — onde a cor muda, um evento terminou e outro "
+    "comecou. A linha tambem se interrompe entre eventos. Zoom com a roda do mouse."
+)
+
+st.divider()
+
+# --------------------------------------------------------------------------
+# Quando cada evento aconteceu
+# --------------------------------------------------------------------------
+st.subheader("Quando cada evento aconteceu")
+
+st.markdown(
+    "A mesma informacao resumida: cada barra e um evento, do inicio ao fim. "
+    "Onde a barra vermelha e longa e a verde e curta, as duas bases discordam."
 )
 
 partes = []

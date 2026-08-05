@@ -27,6 +27,7 @@ from mp import config  # noqa: E402
 from mp.ingestion import (  # noqa: E402
     analise_corte_interno,
     comparar_abordagens,
+    serie_com_eventos,
     criterios_limiar,
     campos_pendentes,
     carregar_markdowns,
@@ -246,6 +247,25 @@ def r_comparar_abordagens():
         eventos["familia"] = eventos[config.COLUNA_ROTULO].map(familia_de)
         resultado[chave] = eventos
     return resultado
+
+
+@st.cache_data(**CACHE)
+def r_serie_com_eventos(versao: str, coluna: str, familias: tuple[str, ...],
+                        max_pontos: int = 3000):
+    """Leituras de uma medida ao longo do tempo, sabendo o evento de cada ponto.
+
+    `versao` e "A" ou "B" — muda so o agrupamento; as leituras sao as mesmas.
+    """
+    from mp.retrieval import familia_de
+
+    comp = r_comparar_abordagens()
+    leituras = comp["leituras_a"] if versao == "A" else comp["leituras_b"]
+
+    if familias:
+        familia_da_linha = leituras[config.COLUNA_ROTULO].map(familia_de)
+        leituras = leituras[familia_da_linha.isin(familias)]
+
+    return serie_com_eventos(leituras, coluna, "evento", max_pontos=max_pontos)
 
 
 @st.cache_data(**CACHE)

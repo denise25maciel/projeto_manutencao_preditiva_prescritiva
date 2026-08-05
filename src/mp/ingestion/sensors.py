@@ -118,6 +118,70 @@ def construir_eventos_por_rotulo(
     return leituras, eventos
 
 
+def serie_com_eventos(
+    leituras: pd.DataFrame,
+    coluna: str,
+    coluna_evento: str = "evento",
+    max_pontos: int = 3000,
+) -> pd.DataFrame:
+    """A serie temporal de uma medida, com o evento de cada ponto.
+
+    Diferente do resumo em `construir_eventos`, que so diz quando cada evento
+    comecou e terminou. Aqui vem o **valor medido** ao longo do tempo, sabendo a
+    qual evento cada ponto pertence — e o que permite ver o dado e a divisao
+    juntos, em vez de so a divisao.
+
+    A reamostragem agrupa leituras vizinhas **dentro do mesmo evento**, nunca
+    atravessando a fronteira: um ponto do grafico jamais mistura dois eventos.
+
+    A coluna `paridade` alterna 0 e 1 a cada evento. Serve para o grafico pintar
+    eventos vizinhos com tons diferentes — com centenas de eventos, uma cor por
+    evento seria ilegivel, mas alternar dois tons mostra exatamente onde um
+    termina e o outro comeca.
+    """
+    tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+
+    if leituras.empty or coluna not in leituras.columns:
+        return pd.DataFrame(
+            columns=[tempo, "valor", "minimo", "maximo", "evento", rotulo, "paridade"]
+        )
+
+    sub = leituras[[tempo, rotulo, coluna_evento, coluna]].sort_values(
+        tempo, kind="stable"
+    )
+    n = len(sub)
+    fator = max(1, -(-n // max_pontos))  # ceil
+
+    if fator > 1:
+        sub = sub.assign(_bloco=sub.groupby(coluna_evento).cumcount() // fator)
+        agrupado = (
+            sub.groupby([coluna_evento, "_bloco"], sort=True)
+            .agg(
+                **{
+                    tempo: (tempo, "first"),
+                    rotulo: (rotulo, "first"),
+                    "valor": (coluna, "median"),
+                    "minimo": (coluna, "min"),
+                    "maximo": (coluna, "max"),
+                }
+            )
+            .reset_index()
+            .drop(columns="_bloco")
+        )
+    else:
+        agrupado = sub.rename(columns={coluna: "valor"}).copy()
+        agrupado["minimo"] = agrupado["valor"]
+        agrupado["maximo"] = agrupado["valor"]
+
+    agrupado = agrupado.rename(columns={coluna_evento: "evento"})
+
+    # Alterna 0/1 na ordem em que os eventos aparecem no tempo.
+    ordem = {ev: i for i, ev in enumerate(agrupado["evento"].drop_duplicates())}
+    agrupado["paridade"] = agrupado["evento"].map(ordem) % 2
+
+    return agrupado.sort_values(tempo).reset_index(drop=True)
+
+
 def coesao_eventos(
     leituras: pd.DataFrame, colunas: list[str] | None = None
 ) -> pd.DataFrame:
