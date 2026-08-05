@@ -118,9 +118,131 @@ arquivo chegar arrumado.
 st.divider()
 
 # ==========================================================================
+# 1.1 A ordem das duas operacoes muda o resultado?
+# ==========================================================================
+st.header("2. A ordem das operacoes importa?")
+
+st.markdown(
+    """
+Ha duas maneiras de montar os eventos, e a primeira vista parecem equivalentes:
+
+- **A)** Ordenar o arquivo inteiro por data, depois quebrar quando o rotulo muda
+- **B)** Separar as leituras por rotulo, depois ordenar cada grupo por data
+
+Rodamos as duas sobre o mesmo arquivo para conferir.
+"""
+)
+
+comp = D.r_comparar_abordagens()
+
+if comp["resultado_igual"]:
+    st.success("As duas abordagens produzem exatamente os mesmos eventos.")
+else:
+    st.error(
+        f"""
+### As duas NAO dao o mesmo resultado
+
+**{len(comp['eventos_a'])} eventos** pela abordagem A contra
+**{len(comp['eventos_b'])} eventos** pela B. Elas discordam em
+**{comp['rotulos_que_divergem']} rotulos**.
+"""
+    )
+
+st.dataframe(
+    comp["resumo"],
+    hide_index=True,
+    column_config={
+        "abordagem": st.column_config.TextColumn("abordagem", width="large"),
+        "eventos": st.column_config.NumberColumn("eventos", format="%d"),
+        "duracao_mediana_min": st.column_config.NumberColumn(
+            "duracao tipica (min)", format="%.1f"
+        ),
+        "duracao_maxima_h": st.column_config.NumberColumn(
+            "duracao maxima", format="%.0f h"
+        ),
+        "com_buraco_1h": st.column_config.NumberColumn(
+            "eventos com buraco > 1 h", format="%d"
+        ),
+        "maior_buraco_h": st.column_config.NumberColumn("maior buraco", format="%.0f h"),
+        "leituras_por_evento": st.column_config.NumberColumn(
+            "leituras por evento", format="%.0f"
+        ),
+    },
+)
+
+st.markdown("#### Por que elas divergem")
+
+st.markdown(
+    """
+Na abordagem **B**, cada grupo tem **um rotulo so**. Se o rotulo nunca muda dentro
+do grupo, nunca ha quebra — entao **cada rotulo vira um unico evento**, mesmo que
+tenha sido medido em maio e de novo em junho.
+
+Na abordagem **A**, entre as duas medicoes do mesmo rotulo existem leituras de
+outros rotulos. Sao elas que provocam a quebra, e os dois trechos viram eventos
+separados.
+"""
+)
+
+pior_b = comp["eventos_b"].loc[comp["eventos_b"]["duracao_s"].idxmax()]
+eventos_a_do_rotulo = int(
+    comp["por_rotulo"].loc[
+        comp["por_rotulo"]["fault"] == pior_b["fault"], "eventos_A"
+    ].iloc[0]
+)
+
+st.warning(
+    f"""
+**O efeito disso, num caso real.**
+
+Pela abordagem B, o rotulo `{pior_b['fault']}` vira **um unico evento** com
+{int(pior_b['n_leituras']):,} leituras, comecando em {pior_b['inicio']:%d/%m/%Y} e
+terminando em {pior_b['fim']:%d/%m/%Y}.
+
+Isso da uma "duracao" de **{pior_b['duracao_s'] / 3600:.0f} horas**, ou
+{pior_b['duracao_s'] / 86400:.0f} dias. A maquina nao ficou 40 dias sendo medida
+sem parar.
+
+Pela abordagem A, o mesmo rotulo vira **{eventos_a_do_rotulo} eventos** separados,
+cada um com sua data.
+""".replace(",", ".")
+)
+
+st.caption(
+    "Os rotulos em que as duas discordam. `diferenca` e quantos eventos a "
+    "abordagem A enxerga a mais."
+)
+st.dataframe(
+    comp["por_rotulo"][comp["por_rotulo"]["diferenca"] != 0],
+    hide_index=True,
+    height=320,
+    column_config={
+        "fault": "tipo de falha",
+        "eventos_A": st.column_config.NumberColumn("A (ordena antes)", format="%d"),
+        "eventos_B": st.column_config.NumberColumn("B (separa antes)", format="%d"),
+        "diferenca": st.column_config.NumberColumn("diferenca", format="%d"),
+    },
+)
+
+st.info(
+    """
+### A conclusao
+
+**Usamos a abordagem A.** Ordenar por data primeiro e o que permite perceber que o
+mesmo defeito foi medido em momentos distintos.
+
+A abordagem B nao esta errada por acaso — ela responde a outra pergunta. Ela diz
+*"em que periodo esse rotulo aparece no arquivo"*, e nao *"quantas vezes ele foi
+medido"*. Para contar ocorrencias, so a A serve.
+"""
+)
+
+st.divider()
+
+# ==========================================================================
 # 1. Antes e depois
 # ==========================================================================
-st.header("2. O que mudou")
+st.header("3. O que mudou")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Linhas no arquivo", f"{len(bruto):,}".replace(",", "."))
@@ -137,7 +259,7 @@ st.caption(
 # ==========================================================================
 # 2. Validacao
 # ==========================================================================
-st.header("3. O agrupamento esta correto?")
+st.header("4. O agrupamento esta correto?")
 
 st.markdown(
     "Cinco checagens que ou passam ou falham. Se alguma falhar, o resultado "
@@ -163,7 +285,7 @@ st.dataframe(
 # ==========================================================================
 # 3. Quantas vezes cada falha aconteceu
 # ==========================================================================
-st.header("4. Quantas vezes cada falha aconteceu")
+st.header("5. Quantas vezes cada falha aconteceu")
 
 st.markdown("Esta e a tabela que responde a pergunta do operador.")
 
@@ -226,7 +348,7 @@ st.altair_chart(
 # ==========================================================================
 # 4. A lista de eventos
 # ==========================================================================
-st.header("5. Todos os eventos")
+st.header("6. Todos os eventos")
 
 filtro = st.multiselect(
     "Filtrar por tipo de falha",
@@ -261,7 +383,7 @@ st.download_button(
 # ==========================================================================
 # 5. O custo de usar so o rotulo
 # ==========================================================================
-st.header("6. O que esta regra deixa passar")
+st.header("7. O que esta regra deixa passar")
 
 _, eventos_10s = D.r_eventos(10.0)
 
@@ -428,16 +550,68 @@ conclusao seria escolher a dedo.
 tabela_crit = criterios.copy()
 tabela_crit["eventos"] = tabela_crit["cortes_que_faria"] + corte["eventos_atuais"]
 
+st.markdown(
+    """
+As colunas do meio respondem **onde exatamente o corte cairia**:
+
+- **passa ate** — o maior intervalo que o criterio deixaria intacto
+- **corta a partir de** — o menor intervalo que ele quebraria
+- **folga** — a distancia entre os dois
+
+A folga e o que revela se o limiar e solido. Folga grande significa que ele caiu
+num vazio: da para move-lo para os lados sem mudar nada. Folga zero significa que
+ele caiu **dentro** de um amontoado de valores iguais, cortando ao meio o que
+deveria ficar junto.
+"""
+)
+
 st.dataframe(
-    tabela_crit[["criterio", "valor_s", "cortes_que_faria", "eventos", "observacao"]],
+    tabela_crit[
+        ["criterio", "valor_s", "maior_que_passa_s", "menor_que_corta_s",
+         "folga_s", "cortes_que_faria", "eventos", "observacao"]
+    ],
     hide_index=True,
     column_config={
         "criterio": st.column_config.TextColumn("criterio", width="medium"),
-        "valor_s": st.column_config.NumberColumn("limiar que produz", format="%.2f s"),
+        "valor_s": st.column_config.NumberColumn("limiar", format="%.3f s"),
+        "maior_que_passa_s": st.column_config.NumberColumn(
+            "passa ate", format="%.3f s",
+            help="Maior intervalo que este limiar NAO corta."
+        ),
+        "menor_que_corta_s": st.column_config.NumberColumn(
+            "corta a partir de", format="%.3f s",
+            help="Menor intervalo que este limiar corta."
+        ),
+        "folga_s": st.column_config.NumberColumn(
+            "folga", format="%.3f s",
+            help="Vazio em volta do limiar. Quanto maior, mais solido."
+        ),
         "cortes_que_faria": st.column_config.NumberColumn("cortes", format="%d"),
         "eventos": st.column_config.NumberColumn("eventos resultantes", format="%d"),
         "observacao": st.column_config.TextColumn("por que", width="large"),
     },
+)
+
+st.markdown(
+    """
+**Lendo a coluna folga:**
+
+| Criterio | Passa ate | Corta a partir de | Folga |
+|---|---|---|---|
+| Tukey e MAD | 2,000 s | 2,000 s | **0,000 s** |
+| Percentil 99,8 | 22,505 s | 22,533 s | **0,028 s** |
+| Maior salto relativo | 6,000 s | 16,085 s | **10,085 s** |
+
+Tukey e MAD cortam **no meio dos 2 segundos** — o intervalo mais comum do arquivo.
+Deixam passar um de 2,000 s e cortam outro de 2,000 s. Nao ha criterio nenhum ali,
+so o acaso do arredondamento.
+
+O percentil corta entre 22,505 e 22,533 s: 28 milesimos de folga. Mover o limiar
+um pouquinho muda o resultado.
+
+O maior salto corta entre 6,000 e 16,085 s: **10 segundos de folga**. Qualquer
+valor nesse intervalo da o mesmo resultado.
+"""
 )
 
 st.warning(
@@ -552,7 +726,7 @@ documentado em `config.GAP_NOVO_EPISODIO_S`, pronto para quando quiser ligar.
 # ==========================================================================
 zero = eventos[eventos["duracao_s"] == 0]
 if len(zero):
-    st.header("7. Um evento impossivel")
+    st.header("8. Um evento impossivel")
     st.error(
         f"""
 Existe **{len(zero)} evento com duracao zero** e

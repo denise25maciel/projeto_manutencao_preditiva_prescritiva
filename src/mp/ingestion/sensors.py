@@ -74,6 +74,114 @@ def construir_eventos(
     return leituras, eventos
 
 
+def construir_eventos_por_rotulo(
+    df: pd.DataFrame,
+    limite_intervalo_s: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Abordagem alternativa: separa por rotulo PRIMEIRO, ordena depois.
+
+    Em `construir_eventos` a ordem e: ordenar o arquivo inteiro por data e depois
+    quebrar quando o rotulo muda. Aqui e o contrario: separa as leituras por
+    rotulo e so entao ordena cada grupo no tempo.
+
+    A diferenca nao e de estilo. Na primeira, um rotulo que reaparece semanas
+    depois vira **dois eventos**, porque no meio houve leituras de outro rotulo.
+    Nesta, os dois trechos ficam no **mesmo** evento, ja que dentro do grupo o
+    rotulo nunca muda.
+
+    Existe para ser comparada com a outra, nao para substitui-la.
+    """
+    tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+
+    if df.empty:
+        vazio = pd.DataFrame(
+            columns=["evento", rotulo, "n_leituras", "inicio", "fim",
+                     "duracao_s", "duracao_min"]
+        )
+        return df.assign(evento=pd.Series(dtype="int64")), vazio
+
+    # Ordena por (rotulo, tempo): agrupa primeiro, cronologia depois.
+    leituras = df.sort_values([rotulo, tempo], kind="stable").reset_index(drop=True)
+
+    cortes = [segmentos.mudou_valor(leituras[rotulo])]
+    if limite_intervalo_s is not None:
+        # Dentro de um grupo o tempo e crescente, entao o intervalo faz sentido.
+        cortes.append(segmentos.passou_intervalo(leituras[tempo], limite_intervalo_s))
+
+    grupos = segmentos.numerar_grupos(*cortes)
+    leituras["evento"] = grupos
+
+    eventos = segmentos.resumir_grupos(
+        leituras, grupos, coluna_tempo=tempo, primeiro_de=[rotulo]
+    ).rename(columns={"_grupo": "evento"})
+
+    return leituras, eventos
+
+
+def comparar_abordagens(df: pd.DataFrame) -> dict:
+    """Executa as duas abordagens e mede a diferenca.
+
+    Devolve os dois conjuntos de eventos, um resumo lado a lado e a lista dos
+    rotulos em que elas discordam — com quantos eventos cada uma produz.
+    """
+    tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
+
+    leituras_a, eventos_a = construir_eventos(df)
+    leituras_b, eventos_b = construir_eventos_por_rotulo(df)
+
+    buracos_a = segmentos.maior_buraco_interno(leituras_a, leituras_a["evento"], tempo)
+    buracos_b = segmentos.maior_buraco_interno(leituras_b, leituras_b["evento"], tempo)
+
+    def perfil(eventos, buracos, nome):
+        b = eventos["evento"].map(buracos).fillna(0.0)
+        return {
+            "abordagem": nome,
+            "eventos": int(len(eventos)),
+            "duracao_mediana_min": float(eventos["duracao_min"].median()),
+            "duracao_maxima_h": float(eventos["duracao_s"].max() / 3600),
+            "com_buraco_1h": int((b > 3600).sum()),
+            "maior_buraco_h": float(b.max() / 3600),
+            "leituras_por_evento": float(eventos["n_leituras"].median()),
+        }
+
+    resumo = pd.DataFrame(
+        [
+            perfil(eventos_a, buracos_a, "A) ordena por data, depois separa por rotulo"),
+            perfil(eventos_b, buracos_b, "B) separa por rotulo, depois ordena por data"),
+        ]
+    )
+
+    por_rotulo = (
+        eventos_a.groupby(rotulo, observed=True).size().rename("eventos_A").to_frame()
+        .join(eventos_b.groupby(rotulo, observed=True).size().rename("eventos_B"))
+        .fillna(0)
+        .astype(int)
+        .reset_index()
+    )
+    por_rotulo["diferenca"] = por_rotulo["eventos_A"] - por_rotulo["eventos_B"]
+    por_rotulo = por_rotulo.sort_values("diferenca", ascending=False).reset_index(drop=True)
+
+    # As duas concordam? Comparamos QUAIS leituras ficaram juntas, nao quantos
+    # eventos sairam: dois agrupamentos podem ter o mesmo total e ainda assim
+    # juntar linhas diferentes. Cada evento vira o conjunto dos ids que contem.
+    def particao(leituras: pd.DataFrame) -> set:
+        por_evento = leituras.groupby("evento")[config.COLUNA_ID].apply(frozenset)
+        return set(por_evento)
+
+    mesma_particao = particao(leituras_a) == particao(leituras_b)
+
+    return {
+        "eventos_a": eventos_a,
+        "eventos_b": eventos_b,
+        "leituras_a": leituras_a,
+        "leituras_b": leituras_b,
+        "resumo": resumo,
+        "por_rotulo": por_rotulo,
+        "resultado_igual": mesma_particao,
+        "rotulos_que_divergem": int((por_rotulo["diferenca"] != 0).sum()),
+    }
+
+
 def diagnostico_ordenacao(df: pd.DataFrame) -> dict:
     """Mede o quanto o arquivo bruto esta fora de ordem.
 
@@ -355,7 +463,30 @@ def criterios_limiar(intervalos: np.ndarray) -> tuple[pd.DataFrame, pd.DataFrame
         int((g > v).sum()) if np.isfinite(v) else 0 for v in criterios["valor_s"]
     ]
 
-    ordem = ["criterio", "valor_s", "cortes_que_faria", "observacao"]
+    # Onde exatamente cada limiar cai: qual e o maior intervalo que ele deixa
+    # passar e qual e o menor que ele corta. Sao os dois vizinhos do limiar na
+    # distribuicao real, e mostram se ele caiu no meio de um grupo ou entre eles.
+    maior_que_passa, menor_que_corta = [], []
+    for v in criterios["valor_s"]:
+        if not np.isfinite(v):
+            maior_que_passa.append(np.nan)
+            menor_que_corta.append(np.nan)
+            continue
+        passa = g[g <= v]
+        corta = g[g > v]
+        maior_que_passa.append(float(passa.max()) if passa.size else np.nan)
+        menor_que_corta.append(float(corta.min()) if corta.size else np.nan)
+
+    criterios["maior_que_passa_s"] = np.round(maior_que_passa, 3)
+    criterios["menor_que_corta_s"] = np.round(menor_que_corta, 3)
+    # Distancia entre esses dois vizinhos. Grande = o limiar caiu num vazio, e
+    # move-lo um pouco nao muda nada. Pequena = ele partiu um grupo ao meio.
+    criterios["folga_s"] = (
+        criterios["menor_que_corta_s"] - criterios["maior_que_passa_s"]
+    ).round(3)
+
+    ordem = ["criterio", "valor_s", "maior_que_passa_s", "menor_que_corta_s",
+             "folga_s", "cortes_que_faria", "observacao"]
     return criterios[ordem], saltos
 
 
