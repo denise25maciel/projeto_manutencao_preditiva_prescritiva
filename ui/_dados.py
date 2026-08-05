@@ -26,6 +26,7 @@ if str(_SRC) not in sys.path:
 from mp import config  # noqa: E402
 from mp.ingestion import (  # noqa: E402
     analise_corte_interno,
+    criterios_limiar,
     campos_pendentes,
     carregar_markdowns,
     cobertura_por_familia,
@@ -221,6 +222,12 @@ def r_analise_corte(limite_intervalo_s: float | None = None):
     """Como um corte por tempo agiria sobre os eventos ja formados."""
     leituras, _ = r_eventos(limite_intervalo_s)
     return analise_corte_interno(leituras)
+
+
+@st.cache_data(**CACHE)
+def r_criterios_limiar(limite_intervalo_s: float | None = None):
+    """Limiar derivado por criterios automaticos, e os que falham aqui."""
+    return criterios_limiar(r_analise_corte(limite_intervalo_s)["intervalos"])
 
 
 @st.cache_data(**CACHE)

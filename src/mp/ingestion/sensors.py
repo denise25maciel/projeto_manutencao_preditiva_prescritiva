@@ -260,6 +260,105 @@ def analise_corte_interno(leituras: pd.DataFrame, cortes=None) -> dict:
     }
 
 
+def criterios_limiar(intervalos: np.ndarray) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Deriva o limiar de quebra por criterios automaticos, sem escolha visual.
+
+    A defesa de um limiar fica fraca quando ele foi escolhido olhando um grafico.
+    Aqui testamos quatro criterios que calculam o numero sozinhos, e reportamos
+    tambem os que **nao** funcionam — omitir as falhas seria escolher a dedo o
+    criterio que confirma a conclusao.
+
+    Devolve `(criterios, saltos)`:
+
+    - `criterios` — um por linha, com o valor que produz e se e aplicavel
+    - `saltos`    — os maiores saltos relativos entre valores consecutivos, que
+                    e o criterio que de fato funciona nesta distribuicao
+    """
+    g = np.asarray(intervalos, dtype=float)
+    g = g[~np.isnan(g)]
+    if g.size == 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    q1, q3 = np.percentile(g, [25, 75])
+    iqr = float(q3 - q1)
+    mediana = float(np.median(g))
+    mad = float(np.median(np.abs(g - mediana)))
+
+    # Maior salto RELATIVO entre dois valores consecutivos da lista ordenada de
+    # valores distintos. Encontra a maior descontinuidade da distribuicao.
+    distintos = np.unique(g)
+    distintos = distintos[distintos > 0]
+    saltos = pd.DataFrame()
+    ponto_medio = None
+    if distintos.size > 1:
+        razao = distintos[1:] / distintos[:-1]
+        ordem = np.argsort(razao)[::-1][:5]
+        saltos = pd.DataFrame(
+            {
+                "de_s": distintos[ordem],
+                "para_s": distintos[ordem + 1],
+                "salto": razao[ordem].round(2),
+                "ponto_medio_s": ((distintos[ordem] + distintos[ordem + 1]) / 2).round(3),
+            }
+        ).reset_index(drop=True)
+        maior = int(np.argmax(razao))
+        ponto_medio = float((distintos[maior] + distintos[maior + 1]) / 2)
+
+    linhas = [
+        {
+            "criterio": "Tukey (Q3 + 1,5 x IQR)",
+            "valor_s": float(q3 + 1.5 * iqr),
+            "observacao": (
+                "O criterio de outlier usado no resto do projeto. Depende do IQR, "
+                f"que aqui vale {iqr:.5f} s — praticamente zero, porque a esmagadora "
+                "maioria das leituras tem exatamente o mesmo intervalo. O limite "
+                "desaba em cima da propria cadencia normal."
+            ),
+        },
+        {
+            "criterio": "Tukey extremo (Q3 + 3 x IQR)",
+            "valor_s": float(q3 + 3.0 * iqr),
+            "observacao": "Mesmo problema: tres vezes um IQR quase nulo continua quase nulo.",
+        },
+        {
+            "criterio": "Mediana + 10 x MAD",
+            "valor_s": float(mediana + 10 * mad / 0.6745) if mad > 0 else float(mediana),
+            "observacao": (
+                f"Versao robusta do desvio padrao. Falha igual: o MAD vale "
+                f"{mad:.5f} s, pelo mesmo motivo."
+            ),
+        },
+        {
+            "criterio": "Percentil 99,8",
+            "valor_s": float(np.percentile(g, 99.8)),
+            "observacao": (
+                "Nao desaba, mas o percentil e escolhido a mao: 99,7 daria 5,5 s e "
+                "99,9 daria 55 s. Trocaria um chute por outro."
+            ),
+        },
+        {
+            "criterio": "Maior salto relativo",
+            "valor_s": ponto_medio if ponto_medio is not None else float("nan"),
+            "observacao": (
+                "Procura a maior descontinuidade da distribuicao e corta no meio "
+                "dela. Nao depende de media, desvio nem percentil escolhido a mao."
+            ),
+        },
+    ]
+
+    criterios = pd.DataFrame(linhas)
+
+    # O veredito nao e um julgamento nosso: e quantos cortes o criterio faria e
+    # quantos eventos sairiam. Um criterio que parte a cadencia normal em milhares
+    # de pedacos se denuncia sozinho no numero.
+    criterios["cortes_que_faria"] = [
+        int((g > v).sum()) if np.isfinite(v) else 0 for v in criterios["valor_s"]
+    ]
+
+    ordem = ["criterio", "valor_s", "cortes_que_faria", "observacao"]
+    return criterios[ordem], saltos
+
+
 def validar_eventos(
     leituras: pd.DataFrame, eventos: pd.DataFrame, original: pd.DataFrame
 ) -> pd.DataFrame:

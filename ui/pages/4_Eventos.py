@@ -410,6 +410,91 @@ nem uma a menos.
 """
     )
 
+st.markdown("#### Deixando a estatistica escolher o numero")
+
+criterios, saltos = D.r_criterios_limiar()
+
+st.markdown(
+    """
+Ate aqui o limiar veio de olhar o grafico. Isso e fragil — outra pessoa olharia e
+escolheria outro numero.
+
+Abaixo, cinco criterios que calculam o limiar **sozinhos**, sem ninguem escolher.
+Estao todos aqui, inclusive os que **nao funcionam** — mostrar so o que confirma a
+conclusao seria escolher a dedo.
+"""
+)
+
+tabela_crit = criterios.copy()
+tabela_crit["eventos"] = tabela_crit["cortes_que_faria"] + corte["eventos_atuais"]
+
+st.dataframe(
+    tabela_crit[["criterio", "valor_s", "cortes_que_faria", "eventos", "observacao"]],
+    hide_index=True,
+    column_config={
+        "criterio": st.column_config.TextColumn("criterio", width="medium"),
+        "valor_s": st.column_config.NumberColumn("limiar que produz", format="%.2f s"),
+        "cortes_que_faria": st.column_config.NumberColumn("cortes", format="%d"),
+        "eventos": st.column_config.NumberColumn("eventos resultantes", format="%d"),
+        "observacao": st.column_config.TextColumn("por que", width="large"),
+    },
+)
+
+st.warning(
+    """
+**Tres dos cinco criterios desabam — e pelo mesmo motivo.**
+
+Tukey e MAD medem "o quanto os valores se espalham". Mas aqui a esmagadora maioria
+das leituras tem **exatamente o mesmo intervalo de 2 segundos**. O espalhamento e
+praticamente nulo: o IQR vale 0,0003 s e o MAD, 0,0000 s.
+
+Com espalhamento quase zero, os tres devolvem ~2 segundos. Repare na coluna
+*cortes*: fariam mais de 10 mil cortes, partindo a cadencia normal em pedacos.
+
+Nao e defeito dos criterios. Eles pressupoem uma distribuicao que se espalha, e
+esta nao se espalha: sao dois blocos rigidos com um vazio no meio.
+"""
+)
+
+st.caption(
+    "O percentil 99,8 nao desaba, mas erra por outro lado: corta em 22,5 s e "
+    "**deixa passar 31 pausas reais** (334 cortes em vez de 365). Ele cai depois "
+    "do vazio, ja dentro do grupo das pausas."
+)
+
+if not saltos.empty:
+    st.markdown("**O criterio que funciona: a maior descontinuidade**")
+    st.markdown(
+        """
+Em vez de medir espalhamento, este procura o **maior salto** entre dois valores
+consecutivos da lista ordenada. Onde a distribuicao mais se rompe, ali esta a
+fronteira.
+"""
+    )
+    st.dataframe(
+        saltos,
+        hide_index=True,
+        column_config={
+            "de_s": st.column_config.NumberColumn("de", format="%.3f s"),
+            "para_s": st.column_config.NumberColumn("para", format="%.3f s"),
+            "salto": st.column_config.NumberColumn("salto", format="%.1f x"),
+            "ponto_medio_s": st.column_config.NumberColumn("meio do salto", format="%.2f s"),
+        },
+    )
+    st.success(
+        f"""
+**O maior salto de toda a distribuicao e de {saltos.iloc[0]['de_s']:.0f} s para
+{saltos.iloc[0]['para_s']:.1f} s — um pulo de {saltos.iloc[0]['salto']:.1f} vezes.**
+
+Ele e maior que os saltos entre pausas de horas e de dias, que aparecem logo
+abaixo na tabela. Ou seja: a separacao entre "gravando" e "parado" e a
+descontinuidade mais forte que existe nestes dados.
+
+O meio desse salto e **{saltos.iloc[0]['ponto_medio_s']:.1f} segundos** — que e
+exatamente o valor que escolhemos olhando o grafico, agora obtido sem olhar nada.
+"""
+    )
+
 st.markdown("**Simulacao: o que cada corte faria com os eventos de hoje**")
 
 sim = corte["simulacao"]

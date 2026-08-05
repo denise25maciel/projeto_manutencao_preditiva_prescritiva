@@ -8,6 +8,7 @@ Contraste com `analysis/`, que so descreve e nunca altera nada.
 
 from mp.ingestion.sensors import (
     analise_corte_interno,
+    criterios_limiar,
     construir_eventos,
     diagnostico_eventos,
     diagnostico_ordenacao,
@@ -28,6 +29,7 @@ from mp.ingestion.documents import (
 
 __all__ = [
     "analise_corte_interno",
+    "criterios_limiar",
     "construir_eventos",
     "diagnostico_eventos",
     "diagnostico_ordenacao",
