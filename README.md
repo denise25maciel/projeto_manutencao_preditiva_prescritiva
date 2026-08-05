@@ -134,6 +134,15 @@ Na primeira visita à tela **Documentos**, clique em **Converter PDFs** para ger
 O primeiro carregamento lê o CSV (~0,4 s para 166 mil linhas) e guarda em
 `@st.cache_data`; os cliques seguintes não releem o arquivo.
 
+> **Ao mexer em `src/mp/`, reinicie o Streamlit.**
+>
+> O Streamlit recarrega sozinho os arquivos de `ui/`, mas **não** o pacote `mp`,
+> que é uma dependência instalada. Se você adicionar uma função em `src/mp/` e o
+> app continuar rodando, ele segue com a versão antiga em memória e o sintoma é um
+> `ImportError: cannot import name ...` — mesmo com o código correto no disco.
+>
+> Pare com `Ctrl+C` e rode de novo.
+
 ### Notebook
 
 ```bash
