@@ -16,7 +16,7 @@ decisão das equipes técnicas.
 | Parte | Escopo | Status |
 |---|---|---|
 | 0 | Módulo de análise exploratória | ✅ concluída |
-| 1 | Tratamento, episódios e `fault_map.yaml` | ⬜ |
+| 1 | Eventos e `fault_map.yaml` | ✅ concluída |
 | 2 | Banco SQLite via SQLAlchemy | ⬜ |
 | 3 | Motor de similaridade (kNN) | ⬜ |
 | 4 | RAG e guardrails G0–G5 | ⬜ |
@@ -374,6 +374,51 @@ Hoje: **151 de 151, sem órfãos e sem entradas mortas no catálogo.**
 `_indice_aliases` levanta erro se o mesmo alias aparecer em duas famílias —
 ambiguidade silenciosa no ponto mais crítico do sistema seria pior que uma falha
 ruidosa.
+
+## Parte 1 — resultados
+
+**166.796 linhas → 205 eventos.** Um evento é uma vez em que a máquina foi medida
+com o mesmo defeito. É o evento que responde *"quantas vezes isso aconteceu"* —
+contar linhas responderia 13.000 para `rolamento_inner`, quando foram algumas
+medições longas.
+
+A regra quebra **apenas na troca de rótulo**. Cinco verificações binárias confirmam
+o agrupamento: nenhum evento mistura rótulos, nenhuma leitura se perdeu ou duplicou,
+todas pertencem a um evento, tudo em ordem de data, numeração consecutiva.
+
+### As duas ordens de operação não são equivalentes
+
+| Abordagem | Eventos | Maior duração | Dispersão interna |
+|---|---|---|---|
+| **A)** ordena por data → separa por rótulo | 205 | 159 h | 2,40 |
+| **B)** separa por rótulo → ordena por data | 151 | **943 h** | **3,12** |
+
+Na B, cada grupo tem um rótulo só; o rótulo nunca muda, então nunca há quebra e
+cada rótulo vira **um** evento — mesmo tendo sido medido em maio e de novo em junho.
+O rótulo `normal` vira um evento de 39 dias.
+
+A **dispersão interna** mede o quanto as leituras de dentro de cada evento se
+parecem, com as medidas padronizadas sobre o arquivo inteiro. A B é 30% pior:
+ao juntar medições separadas por semanas, ela mistura leituras que não se parecem.
+
+**Usamos a A.** Ela conta ocorrências; a B conta períodos.
+
+### O corte por tempo, adiado mas justificado
+
+A regra atual ignora pausas: se a coleta parou e retomou com o mesmo rótulo, vira um
+evento só. Isso acontece em **63 dos 205 eventos**.
+
+Se a decisão mudar, o limiar já está definido e defendido. Os intervalos entre
+leituras têm uma **faixa vazia**: nada entre 6,000 s e 16,085 s, em 166.591
+intervalos. Qualquer corte nessa faixa dá os mesmos 570 eventos.
+
+Testamos cinco critérios estatísticos automáticos. Tukey e MAD desabam — o IQR vale
+0,0003 s porque quase toda leitura tem o mesmo intervalo, e eles devolvem 2 s,
+fazendo 26 mil cortes. O que funciona é a **maior descontinuidade relativa**: o
+maior salto da distribuição é de 6,000 s para 16,085 s (2,7×), maior que os saltos
+entre pausas de horas e de dias. Seu ponto médio dá 11 s.
+
+Registrado em `config.GAP_NOVO_EPISODIO_S = 10 s`, desligado.
 
 ## Dados e privacidade
 
