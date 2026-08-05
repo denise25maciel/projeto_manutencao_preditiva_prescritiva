@@ -298,13 +298,17 @@ da falha nao mudou entre elas.
     )
 
     st.caption(
-        "Os eventos com interrupcao interna maior que 1 minuto. A coluna "
-        "*maior pausa* mostra o tamanho do buraco."
+        "Os eventos com interrupcao interna maior que 1 minuto. **Atencao as "
+        "unidades:** a duracao esta em HORAS e a maior pausa tambem, para poderem "
+        "ser comparadas na mesma linha."
     )
+    tabela_diag = diagnostico.copy()
+    tabela_diag["duracao_h"] = (tabela_diag["duracao_min"] / 60).round(1)
+
     st.dataframe(
-        diagnostico[
+        tabela_diag[
             ["evento", "fault", "n_leituras", "inicio", "fim",
-             "duracao_min", "maior_buraco_h"]
+             "duracao_h", "maior_buraco_h"]
         ],
         hide_index=True,
         height=380,
@@ -314,8 +318,14 @@ da falha nao mudou entre elas.
             "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
             "inicio": st.column_config.DatetimeColumn("comecou", format="DD/MM/YY HH:mm"),
             "fim": st.column_config.DatetimeColumn("terminou", format="DD/MM/YY HH:mm"),
-            "duracao_min": st.column_config.NumberColumn("duracao (min)", format="%.0f"),
-            "maior_buraco_h": st.column_config.NumberColumn("maior pausa (h)", format="%.1f"),
+            "duracao_h": st.column_config.NumberColumn(
+                "duracao total (horas)", format="%.1f h",
+                help="Do inicio ao fim do evento, incluindo as pausas de dentro."
+            ),
+            "maior_buraco_h": st.column_config.NumberColumn(
+                "maior pausa (horas)", format="%.1f h",
+                help="A maior interrupcao sem nenhuma leitura, dentro do evento."
+            ),
         },
     )
 
@@ -327,6 +337,128 @@ A decisao foi comecar so com o rotulo. O codigo ja aceita a regra de tempo — e
 esta pronta e desligada. Ligar e trocar um parametro.
 
 A tela mostra o custo para a escolha continuar sendo informada.
+"""
+)
+
+# --------------------------------------------------------------------------
+# 6.1 Como o corte por tempo agiria
+# --------------------------------------------------------------------------
+st.subheader("Se ligassemos o corte por tempo, onde ele cairia")
+
+corte = D.r_analise_corte()
+est = corte["estatisticas"]
+vazio = corte["vazio"]
+
+st.markdown(
+    """
+Aqui olhamos **so os intervalos que existem dentro dos eventos atuais** — o tempo
+entre uma leitura e a seguinte, sem atravessar a fronteira de um evento para outro.
+
+Se um dia decidirmos cortar tambem por tempo, e nestes intervalos que o corte agiria.
+"""
+)
+
+e1, e2, e3, e4 = st.columns(4)
+e1.metric("Menor intervalo", f"{est['minimo_s']:.1f} s")
+e2.metric("Intervalo tipico", f"{est['mediana_s']:.1f} s")
+e3.metric("Intervalo medio", f"{est['media_s']:.1f} s")
+e4.metric("Maior intervalo", f"{est['maximo_s'] / 3600:.0f} h")
+
+st.caption(
+    f"Sobre {est['n']:,} intervalos.".replace(",", ".")
+    + " O tipico e 2 segundos, mas a media e 16 — sinal de que ha dois grupos "
+    "misturados."
+)
+
+faixas = corte["faixas"].copy()
+faixas["faixa"] = [
+    f"{a:.0f} a {b:.0f} s" if b != float("inf") else f"mais de {a:.0f} s"
+    for a, b in zip(faixas["de_s"], faixas["ate_s"])
+]
+
+st.altair_chart(
+    alt.Chart(faixas)
+    .mark_bar()
+    .encode(
+        x=alt.X("faixa:N", sort=list(faixas["faixa"]), title="intervalo entre leituras",
+                axis=alt.Axis(labelAngle=-40)),
+        y=alt.Y("intervalos:Q", title="quantas vezes", scale=alt.Scale(type="symlog")),
+        color=alt.Color(
+            "vazia:N", title=None,
+            scale=alt.Scale(domain=[False, True], range=["#4c78a8", "#d1495b"]),
+            legend=alt.Legend(labelExpr="datum.label == 'true' ? 'faixa vazia' : 'com dados'"),
+        ),
+        tooltip=["faixa", "intervalos"],
+    )
+    .properties(height=280),
+    width="stretch",
+)
+
+if vazio.get("centro_s"):
+    st.success(
+        f"""
+**Os dois grupos nao se tocam.**
+
+- Coleta continua: ate **{vazio['maior_continuo_s']:.0f} segundos**
+- Pausas de verdade: a partir de **{vazio['menor_pausa_s']:.0f} segundos**
+- Entre os dois: **nenhuma ocorrencia**
+
+Sao **{vazio['n_pausas']} pausas** escondidas dentro dos {corte['eventos_atuais']}
+eventos atuais. Qualquer corte entre {vazio['maior_continuo_s']:.0f} e
+{vazio['menor_pausa_s']:.0f} segundos pegaria exatamente essas — nem uma a mais,
+nem uma a menos.
+"""
+    )
+
+st.markdown("**Simulacao: o que cada corte faria com os eventos de hoje**")
+
+sim = corte["simulacao"]
+st.dataframe(
+    sim[["corte_s", "eventos", "eventos_partidos", "pct_eventos_partidos"]],
+    hide_index=True,
+    column_config={
+        "corte_s": st.column_config.NumberColumn("corte (segundos)", format="%.1f s"),
+        "eventos": st.column_config.NumberColumn("eventos resultantes", format="%d"),
+        "eventos_partidos": st.column_config.NumberColumn(
+            "eventos que se partiriam", format="%d",
+            help=f"Dos {corte['eventos_atuais']} eventos atuais."
+        ),
+        "pct_eventos_partidos": st.column_config.NumberColumn(
+            "% dos atuais", format="%.0f%%"
+        ),
+    },
+)
+
+st.altair_chart(
+    alt.Chart(sim)
+    .mark_line(point=True, strokeWidth=2, color="#d1495b")
+    .encode(
+        x=alt.X("corte_s:Q", title="corte usado (segundos)", scale=alt.Scale(type="log")),
+        y=alt.Y("eventos:Q", title="eventos resultantes", scale=alt.Scale(type="log")),
+        tooltip=[alt.Tooltip("corte_s:Q", title="corte (s)"), "eventos",
+                 "eventos_partidos"],
+    )
+    .properties(height=280),
+    width="stretch",
+)
+
+st.info(
+    f"""
+### Como ler
+
+**Corte de 2,5 ou 5 segundos → 11 mil eventos.** Errado. Parte das leituras vem a
+cada 5,3 segundos, e um corte abaixo disso parte cada medicao em centenas de pedacos.
+
+**Corte de 8, 10 ou 15 segundos → 570 eventos, sempre o mesmo.** Sao os
+{corte['eventos_atuais']} de hoje mais as {vazio.get('n_pausas', 0)} pausas internas.
+Tres valores diferentes, um unico resultado — porque todos caem na faixa vazia.
+
+**Corte de 60 segundos → 366 eventos.** Ja deixa passar mais da metade das pausas.
+
+### Se a decisao mudar
+
+O numero a usar seria **10 segundos**, o centro da faixa vazia. E o que esta
+documentado em `config.GAP_NOVO_EPISODIO_S`, pronto para quando quiser ligar.
 """
 )
 

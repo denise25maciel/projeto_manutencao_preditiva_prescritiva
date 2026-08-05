@@ -159,6 +159,107 @@ def diagnostico_eventos(
     )
 
 
+def analise_corte_interno(leituras: pd.DataFrame, cortes=None) -> dict:
+    """Como um corte por tempo agiria sobre os eventos que ja existem.
+
+    A regra atual so quebra na troca de rotulo, entao alguns eventos carregam
+    interrupcoes por dentro. Esta funcao olha **so esses intervalos internos** e
+    responde: se passassemos a cortar tambem por tempo, o que mudaria?
+
+    Diferente da analise da tela "Qualidade dos Dados", que examina o arquivo
+    inteiro para escolher um limiar. Aqui o recorte ja e o resultado: dos 205
+    eventos formados, quais se partiriam e em quantos.
+
+    Devolve:
+
+    - `intervalos`   — todos os intervalos entre leituras dentro de um evento
+    - `estatisticas` — minimo, mediana, media e maximo desses intervalos
+    - `faixas`       — quantos caem em cada faixa, com marcacao das vazias
+    - `vazio`        — a fronteira entre "coleta continua" e "pausa de verdade"
+    - `simulacao`    — para cada corte candidato, quantos eventos sairiam
+    """
+    tempo = config.COLUNA_TEMPO
+
+    delta = leituras[tempo].diff().dt.total_seconds()
+    # A primeira linha de cada evento carrega o intervalo em relacao ao evento
+    # anterior. Descartamos: so interessa o que acontece por dentro.
+    dentro_do_evento = leituras.groupby("evento").cumcount() > 0
+    internos = delta.to_numpy()[dentro_do_evento.to_numpy()]
+    internos = internos[~pd.isna(internos)]
+
+    if internos.size == 0:
+        return {"intervalos": internos, "estatisticas": {}, "faixas": pd.DataFrame(),
+                "vazio": {}, "simulacao": pd.DataFrame()}
+
+    estatisticas = {
+        "n": int(internos.size),
+        "minimo_s": float(internos.min()),
+        "mediana_s": float(pd.Series(internos).median()),
+        "media_s": float(internos.mean()),
+        "maximo_s": float(internos.max()),
+    }
+
+    limites = [0, 1, 2.5, 4, 6, 10, 15, 20, 30, 60, 300, 3600, float("inf")]
+    faixas = pd.DataFrame(
+        {
+            "de_s": limites[:-1],
+            "ate_s": limites[1:],
+            "intervalos": [
+                int(((internos >= a) & (internos < b)).sum())
+                for a, b in zip(limites[:-1], limites[1:])
+            ],
+        }
+    )
+    faixas["vazia"] = faixas["intervalos"] == 0
+
+    LIMITE_CONTINUO = 10.0
+    continuos = internos[internos <= LIMITE_CONTINUO]
+    pausas = internos[internos > LIMITE_CONTINUO]
+    vazio = {
+        "maior_continuo_s": float(continuos.max()) if continuos.size else None,
+        "menor_pausa_s": float(pausas.min()) if pausas.size else None,
+        "n_pausas": int(pausas.size),
+    }
+    if vazio["maior_continuo_s"] is not None and vazio["menor_pausa_s"] is not None:
+        vazio["centro_s"] = (vazio["maior_continuo_s"] + vazio["menor_pausa_s"]) / 2
+
+    # --- simulacao ---------------------------------------------------------
+    cortes = list(cortes) if cortes else [2.5, 5, 8, 10, 15, 20, 30, 60, 300, 3600]
+    eventos_atuais = int(leituras["evento"].nunique())
+
+    linhas = []
+    for c in cortes:
+        # Quantos intervalos internos seriam cortados por esse limiar.
+        partiria = int((internos > c).sum())
+        eventos_partidos = int(
+            leituras.assign(_corta=[False] + list(delta.to_numpy()[1:] > c))
+            .loc[dentro_do_evento & (delta > c), "evento"]
+            .nunique()
+        )
+        linhas.append(
+            {
+                "corte_s": c,
+                "eventos": eventos_atuais + partiria,
+                "eventos_partidos": eventos_partidos,
+                "novos_cortes": partiria,
+            }
+        )
+
+    simulacao = pd.DataFrame(linhas)
+    simulacao["pct_eventos_partidos"] = (
+        simulacao["eventos_partidos"] / max(eventos_atuais, 1) * 100
+    ).round(1)
+
+    return {
+        "intervalos": internos,
+        "estatisticas": estatisticas,
+        "faixas": faixas,
+        "vazio": vazio,
+        "simulacao": simulacao,
+        "eventos_atuais": eventos_atuais,
+    }
+
+
 def validar_eventos(
     leituras: pd.DataFrame, eventos: pd.DataFrame, original: pd.DataFrame
 ) -> pd.DataFrame:
