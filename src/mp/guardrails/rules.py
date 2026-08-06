@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 
 from mp import config
-from mp.retrieval.catalog import documentos_de, familia_de, is_problem
+from mp.retrieval.catalog import verificar_existencia_conserto
 
 # --------------------------------------------------------------------------
 # Faixas fisicas aceitaveis para o G0
@@ -85,14 +85,12 @@ class Veredito:
 def g0_entrada(evento: dict) -> Veredito:
     """Schema e faixas fisicas do JSON recebido.
 
-    Nao julga se a maquina esta boa ou ruim: julga se o **dado** e utilizavel.
-    Uma temperatura de 5000 graus nao e uma falha grave, e um sensor quebrado ou
-    uma unidade trocada.
+    Julga se o **dado** e utilizavel, nao se a maquina esta boa: 5000 graus nao
+    e falha grave, e sensor quebrado ou unidade trocada.
 
-    O campo `fault` e opcional de proposito. O enunciado traz um exemplo com ele
-    preenchido, mas em producao o evento chega sem rotulo — quem infere e a
-    similaridade. Quando vier, e tratado como anotacao do operador, a ser
-    confrontada com o que os vizinhos indicam.
+    `fault` e opcional de proposito — em producao o evento chega sem rotulo e
+    quem infere e a similaridade. Quando vier, e anotacao do operador a
+    confrontar com os vizinhos.
     """
     if not isinstance(evento, dict):
         return Veredito("G0", False, "A entrada precisa ser um objeto JSON.",
@@ -137,16 +135,12 @@ def g0_entrada(evento: dict) -> Veredito:
 def g1_similaridade(distancia: float | None, limiar: float | None = None) -> Veredito:
     """Distancia do vizinho mais proximo contra o limiar.
 
-    **Incompleto — depende da Parte 3.** O motor de similaridade ainda nao existe,
-    entao nao ha distancia para comparar nem distribuicao para calibrar o limiar.
+    Com `distancia=None` devolve `passou=True` e avisa na mensagem que nao
+    verificou. Guardrail nao implementado deve deixar passar: bloquear tudo
+    esconderia o resto do fluxo e fingiria que a trava funciona.
 
-    Com `distancia=None`, devolve `passou=True` e diz na mensagem que nao foi
-    verificado. Deixar passar e o comportamento certo para um guardrail nao
-    implementado: bloquear tudo esconderia o resto do fluxo e daria a impressao
-    falsa de que a trava funciona.
-
-    Quando a Parte 3 existir, o limiar sai da distribuicao das distancias dentro
-    de cada classe e vem para `config`.
+    O limiar definitivo sai da distribuicao das distancias dentro de cada classe
+    e vai para `config`.
     """
     if distancia is None:
         return Veredito("G1", True,
@@ -176,29 +170,18 @@ def g1_similaridade(distancia: float | None, limiar: float | None = None) -> Ver
 def g2_e_problema(rotulo_ou_familia: str | None) -> Veredito:
     """Encerra o fluxo quando a maquina esta apenas operando.
 
-    Aceita rotulo cru ou familia: resolve pelo catalogo quando preciso.
+    Aceita rotulo cru ou familia. Quem decide e `verificar_existencia_conserto`;
+    aqui so se le o veredito — nao ha uma segunda leitura do YAML que pudesse
+    discordar dele.
+
+    Reprova tambem o rotulo desconhecido: sem catalogo nao da para afirmar que
+    e defeito. Sao recusas diferentes, e a verificacao traz a frase de cada uma.
     """
-    if rotulo_ou_familia is None:
-        return Veredito("G2", False, "Sem rotulo para avaliar.", {})
-
-    familia = rotulo_ou_familia
-    problema = is_problem(familia)
-    if problema is None:
-        familia = familia_de(rotulo_ou_familia)
-        problema = is_problem(familia) if familia else None
-
-    if problema is None:
-        return Veredito("G2", False,
-                        f"'{rotulo_ou_familia}' nao esta no catalogo — "
-                        "registre-o no fault_map.yaml.",
-                        {"familia": None})
-
+    c = verificar_existencia_conserto(rotulo_ou_familia)
     return Veredito(
-        "G2", bool(problema),
-        f"'{familia}' e um defeito." if problema
-        else f"'{familia}' e um estado da maquina, nao um defeito. "
-             "Nao ha acao corretiva a prescrever.",
-        {"familia": familia, "is_problem": bool(problema)},
+        "G2", c.e_defeito,
+        f"'{c.familia}' e um defeito." if c.e_defeito else c.mensagem,
+        {"familia": c.familia, "is_problem": c.e_defeito, "situacao": c.situacao},
     )
 
 
@@ -210,28 +193,20 @@ def g2_e_problema(rotulo_ou_familia: str | None) -> Veredito:
 def g3_tem_documento(familia: str | None) -> Veredito:
     """`SELECT` no catalogo. Nunca similaridade.
 
-    E o principio 4 do projeto: busca vetorial nunca volta vazia, entao ela nao
-    pode ser quem responde "existe documento?". Aqui e uma consulta exata que
-    devolve lista vazia quando nao ha.
+    Busca vetorial nunca volta vazia, entao ela nao pode responder "existe
+    documento?". Uma consulta exata pode.
 
-    Cobertura **parcial** conta como ausencia. O `eccentric_rotor` aparece numa
-    secao do manual de polias, mas e excentricidade de polia, nao de rotor —
-    prescrever ajuste de polia para um problema de rotor seria pior que recusar.
+    Cobertura **parcial** conta como ausencia: `eccentric_rotor` aparece no
+    manual de polias, mas e excentricidade de polia, nao de rotor — prescrever
+    ajuste de polia para problema de rotor seria pior que recusar. Essa regra
+    vive em `verificar_existencia_conserto`, junto com a frase que a explica.
     """
-    if familia is None:
-        return Veredito("G3", False, "Sem familia para consultar.", {})
-
-    docs = documentos_de(familia)
-    if not docs:
-        return Veredito(
-            "G3", False,
-            "Sem documentacao — registre um documento.",
-            {"familia": familia, "documentos": []},
-        )
-
-    ids = [d["id"] for d in docs]
-    return Veredito("G3", True, f"{len(ids)} documento(s): {', '.join(ids)}.",
-                    {"familia": familia, "documentos": ids})
+    c = verificar_existencia_conserto(familia)
+    return Veredito(
+        "G3", c.prescrever, c.mensagem,
+        {"familia": c.familia, "documentos": c.documento_ids,
+         "situacao": c.situacao},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -275,25 +250,17 @@ def g1t_evidencia_decide(
 ) -> Veredito:
     """A evidencia aponta UM manual, ou ainda ha varios plausiveis?
 
-    E o **G1 do caminho por texto**. No caminho do sensor, o G1 pergunta se o
-    vizinho mais proximo esta perto o bastante; aqui a pergunta equivalente e se
-    o documento vencedor ganhou de longe ou por um fio.
+    Existe porque o vencedor sai de um `max`, que sempre devolve alguem — mesmo
+    com 1,43 contra 1,39. E manual travado nao muda mais.
 
-    Existe porque `documento_predominante` e um `max`: ele **sempre** devolve um
-    vencedor, mesmo quando o primeiro fez 1,43 e o segundo 1,39. Sem esta
-    verificacao a sessao fixa um manual por acaso e, como o manual nao muda mais,
-    o acaso governa a conversa inteira.
-
-    **Duas condicoes, e as duas precisam valer:**
+    Duas condicoes, ambas obrigatorias:
 
     `margem`  o quanto o 1o ganha do 2o. Pega o empate na cabeca.
-    `share`   quanto do peso TOTAL o 1o concentra. Pega o caso que a margem nao
-              enxerga: pesos [1,0; 0,5; 0,5; 0,5; 0,5] tem margem de 50% mas
-              deixam quatro manuais ainda plausiveis. Ganhar do segundo nao e o
-              mesmo que ganhar de todos.
+    `share`   quanto do peso TOTAL o 1o concentra. Pesos [1,0; 0,5; 0,5; 0,5]
+              tem margem de 50% e ainda assim deixam tres manuais plausiveis:
+              ganhar do segundo nao e ganhar de todos.
 
-    Reprovar aqui **nao** e recusar. E dizer "ainda nao da para decidir" — o
-    fluxo entra em investigacao e pede mais sintomas.
+    Reprovar aqui nao e recusar, e dizer "ainda nao da para decidir".
     """
     if not ranking:
         return Veredito("G1T", False, "Nenhum documento candidato.",

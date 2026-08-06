@@ -38,6 +38,12 @@ class Turno:
     recusado: bool = False
     motivo: str = ""
 
+    # Turno que o SISTEMA fez a si mesmo ao fixar o manual, para ja abrir a
+    # conversa com problema, sintomas e correcao. A tela desenha sem o balao do
+    # usuario — a pergunta nao foi do tecnico. Fora isso e um turno igual aos
+    # outros: passou por G4, redacao e G5, e entra no historico verificado.
+    abertura: bool = False
+
     usou_llm: bool = False
     provedor: str | None = None
     modelo: str | None = None
@@ -75,6 +81,10 @@ class Sessao:
     """Uma conversa sobre um defeito. O defeito nao muda; as perguntas mudam."""
 
     rotulo: str
+    # So preenchida quando o tipo foi **apurado**: pelo kNN, ou por o manual
+    # travado cobrir uma familia so. Manual que cobre varias deixa isto `None` —
+    # o Doc1 atende quatro tipos de rolamento e a busca por texto nao separa
+    # entre eles. Quem quer nomear o assunto usa `familias`.
     familia: str | None = None
     documentos: list[str] = field(default_factory=list)
 
@@ -90,32 +100,88 @@ class Sessao:
     peso_documento: float = 0.0
     trechos_de_abertura: list = field(default_factory=list)
 
-    # --- investigacao: quando a evidencia nao aponta um manual so ----------
+    # --- escolha: quando a evidencia nao aponta um manual so ---------------
     # Cada sintoma e guardado SEPARADO, nao concatenado numa frase. A busca
     # codifica um por um e fica com o maior score por trecho; juntar tudo num
     # texto so tiraria a media dos sintomas e diluiria justamente o que
     # discrimina. Ver `rag.buscar_por_sintomas`.
     sintomas: list[str] = field(default_factory=list)
-    investigando: bool = False
-    rodadas: int = 0
     candidatos: list[tuple[str, float]] = field(default_factory=list)
-    pergunta_investigacao: str = ""
-    # O historico das perguntas feitas ao tecnico, uma por rodada. A conversa
-    # precisa poder ser relida inteira: sem isto so a ultima pergunta sobrevive
-    # e a tela mostraria respostas soltas, sem o que as motivou.
-    perguntas_investigacao: list[str] = field(default_factory=list)
-    # Preenchido quando o teto de rodadas se esgota: a escolha passa a ser do
-    # tecnico, e a interface precisa saber disso para oferecer a lista.
+    # `Doc2` nao diz nada a quem esta na maquina; `desalinhamento` diz. O mapa
+    # e montado no grafo, que e quem tem acesso ao catalogo — o estado nao
+    # consulta banco nem YAML, so guarda o que ja foi resolvido.
+    nomes_candidatos: dict[str, str] = field(default_factory=dict)
+    # A evidencia nao separou os candidatos: a lista vai para a tela e **o
+    # tecnico** decide entre seguir com um ou detalhar mais. Nao ha teto de
+    # tentativas — quem decide quando parar de detalhar e ele, nao um contador.
     aguardando_escolha: bool = False
 
     @property
     def situacao(self) -> str:
-        """`investigando` | `aberta` | `encerrada` — o que a tela deve mostrar."""
+        """`escolhendo` | `aberta` | `encerrada` — o que a tela deve mostrar."""
         if self.aberta:
             return "aberta"
-        if self.investigando or self.aguardando_escolha:
-            return "investigando"
+        if self.aguardando_escolha:
+            return "escolhendo"
         return "encerrada"
+
+    @property
+    def melhor_trecho_por_documento(self) -> dict[str, object]:
+        """O trecho de maior score de cada documento candidato.
+
+        E a resposta a *"por que este manual apareceu na lista?"*. Mostrar o
+        trecho ao lado do nome e o que torna a escolha do tecnico informada em
+        vez de um chute entre seis codigos: ele le o pedaco do manual que se
+        pareceu com o que descreveu e reconhece — ou nao — a propria maquina.
+
+        Sai dos trechos que a busca **ja** devolveu; nao ha consulta nova.
+        """
+        melhor: dict[str, object] = {}
+        for t in self.trechos_de_abertura:
+            atual = melhor.get(t.documento_id)
+            if atual is None or t.score > atual.score:
+                melhor[t.documento_id] = t
+        return melhor
+
+    @property
+    def aviso_de_pouca_informacao(self) -> str:
+        """Em portugues claro: por que a escolha esta voltando para o tecnico.
+
+        O `motivo` diz "margem de 14%, minimo 25%" — verdade, e ilegivel para
+        quem esta com a maquina parada. O numero desce para a legenda.
+
+        E **codigo, nao modelo**: dependendo do LLM, bastaria ele cair ou
+        redigir mal para o sistema nao avisar nada, e o tecnico ficaria
+        esperando uma resposta que nunca vem.
+        """
+        # Os sintomas entram na propria frase, entre colchetes. O tecnico ve o
+        # que o sistema realmente registrou — se ele escreveu tres coisas e so
+        # duas aparecem, o erro fica visivel na hora, em vez de virar uma busca
+        # silenciosamente errada.
+        ditos = ", ".join(s.strip() for s in self.sintomas if s.strip())
+        descrito = f"O que voce descreveu [{ditos}]" if ditos else "O que voce descreveu"
+
+        n = len(self.candidatos)
+        if n <= 1:
+            return (
+                f"{descrito} ainda nao aponta um procedimento com folga. "
+                "Siga com o candidato abaixo se ele for o certo, ou **conte "
+                "mais** sobre o que esta acontecendo."
+            )
+
+        # Os NOMES dos candidatos, nao os sintomas deles. A diferenca e
+        # deliberada: mostrar "desalinhamento, polia, correia" torna a duvida
+        # visivel; mostrar o que cada um descreve faria o tecnico repetir de
+        # volta o que acabou de ler, e a evidencia viraria eco em vez de
+        # observacao.
+        quais = ", ".join(
+            self.nomes_candidatos.get(doc, doc) for doc, _ in self.candidatos
+        )
+        return (
+            f"{descrito} combina com **{n} procedimentos** ({quais}) e a "
+            "evidencia nao separa um deles. **Escolha** o que descreve a sua "
+            "maquina, ou **conte mais** para eu refazer a busca."
+        )
 
     @property
     def descricao_completa(self) -> str:
@@ -142,6 +208,32 @@ class Sessao:
     @property
     def manual(self) -> str:
         return ", ".join(self.documentos) if self.documentos else "(nenhum)"
+
+    @property
+    def familias(self) -> list[str]:
+        """Todas as familias que o manual desta conversa cobre.
+
+        Pelo sensor, a familia foi apurada e a lista tem uma so. Por texto, ela
+        vem do documento travado e pode ter varias. E a lista, nao um item dela,
+        o que se pode afirmar dessa sessao.
+        """
+        if self.familias_do_documento:
+            return list(self.familias_do_documento)
+        return [self.familia] if self.familia else []
+
+    @property
+    def assunto(self) -> str:
+        """O nome do assunto para exibir — `rolamento ×4` quando o tipo nao foi apurado.
+
+        Le o nome que o grafo ja resolveu em `nomes_candidatos`; a regra que o
+        monta mora la, junto do catalogo, e nao e reescrita aqui.
+        """
+        if self.familia:
+            return self.familia
+        for documento in self.documentos:
+            if nome := self.nomes_candidatos.get(documento):
+                return nome
+        return self.manual
 
     def historico_para_prompt(self, maximo: int = 4) -> list[tuple[str, str]]:
         """Os ultimos turnos como `(pergunta, texto_verificado)`.

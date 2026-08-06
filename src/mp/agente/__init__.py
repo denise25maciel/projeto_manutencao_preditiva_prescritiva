@@ -8,10 +8,11 @@ from mp.agente.estado import Sessao, Turno
 from mp.agente.grafo import (
     abrir_sessao,
     abrir_sessao_por_texto,
-    continuar_investigacao,
+    acrescentar_sintoma,
     fixar_documento,
     no_escopo,
     responder,
+    resumo_inicial,
 )
 
 __all__ = [
@@ -19,8 +20,9 @@ __all__ = [
     "Turno",
     "abrir_sessao",
     "abrir_sessao_por_texto",
-    "continuar_investigacao",
+    "acrescentar_sintoma",
     "fixar_documento",
     "responder",
+    "resumo_inicial",
     "no_escopo",
 ]

@@ -40,8 +40,20 @@ class Embedder(Protocol):
     nome: str
     dimensao: int
 
-    def ajustar(self, textos: list[str]) -> "Embedder": ...
-    def codificar(self, textos: list[str]) -> np.ndarray: ...
+    def ajustar(self, textos: list[str]) -> "Embedder":
+        """Aprende, a partir do corpus, a regra que converte texto em vetor.
+
+        Nao devolve vetor e nao grava nada — deixa o objeto em condicao de
+        responder a `codificar`, e retorna a si mesmo para encadear. Cada
+        implementacao aproveita `textos` de um jeito: o `TfidfLsa` tira dali o
+        vocabulario e os eixos do SVD; o `Multilingue` ignora, porque ja vem
+        treinado, e so carrega os pesos.
+        """
+        ...
+
+    def codificar(self, textos: list[str]) -> np.ndarray:
+        """Textos -> matriz (um vetor L2-normalizado por linha). Exige `ajustar` antes."""
+        ...
 
 
 def _normalizar(matriz: np.ndarray) -> np.ndarray:
@@ -54,13 +66,15 @@ def _normalizar(matriz: np.ndarray) -> np.ndarray:
 class TfidfLsa:
     """Contagem de palavras comprimida por SVD — o classico LSA.
 
-    O TF-IDF sozinho da um vetor enorme e esparso, com uma posicao por palavra do
-    vocabulario. O SVD comprime para poucas centenas de dimensoes densas, e nessa
-    compressao palavras que sempre aparecem juntas acabam proximas — e o mais
-    perto de "significado" que da para chegar sem modelo neural.
+    TF-IDF (*term frequency-inverse document frequency*) da um vetor enorme e
+    esparso, com uma posicao por palavra. O SVD (*singular value decomposition*)
+    comprime para poucas centenas de dimensoes densas, e nessa compressao
+    palavras que sempre aparecem juntas ficam proximas — o mais perto de
+    "significado" sem modelo neural. Os dois juntos sao o LSA, *latent semantic
+    analysis*.
 
-    **Precisa ver o corpus antes de usar** (`ajustar`), porque o vocabulario e as
-    direcoes do SVD saem dele. Um embedder neural nao precisa: ja vem treinado.
+    **Precisa ver o corpus antes** (`ajustar`): dele saem o vocabulario e as
+    direcoes do SVD. Um embedder neural nao precisa, ja vem treinado.
     """
 
     def __init__(self, dimensao: int = 256, min_df: int = 1):

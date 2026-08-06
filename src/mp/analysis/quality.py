@@ -85,13 +85,11 @@ def _linha_redundancia(descartavel: str, manter: str, relacao: str, erro: pd.Ser
 def duplicatas_consecutivas(df: pd.DataFrame) -> dict:
     """Linhas identicas a anterior em todas as colunas de medida.
 
-    Ignora `id` e `created_at` de proposito: eles sempre mudam, e comparar com
-    eles nunca acusaria duplicata nenhuma.
+    Ignora `id` e `created_at`, que sempre mudam e nunca acusariam duplicata.
 
-    Duas leituras identicas em 4 casas decimais a 2s de distancia sao, quase
-    certamente, a mesma amostra repetida pelo datalogger — nao dois instantes
-    fisicos iguais. Elas inflam a contagem de ocorrencias e, na Parte 3,
-    aparecem como vizinhos de distancia zero que nao agregam informacao.
+    Duas leituras iguais em 4 casas decimais a 2 s de distancia sao a mesma
+    amostra repetida pelo datalogger, nao dois instantes fisicos iguais. Elas
+    inflam a contagem de ocorrencias e viram vizinhos de distancia zero no kNN.
     """
     cols = [c for c in df.columns if c not in (config.COLUNA_ID, config.COLUNA_TEMPO)]
     igual_a_anterior = (df[cols] == df[cols].shift()).all(axis=1)
@@ -115,19 +113,13 @@ def duplicatas_consecutivas(df: pd.DataFrame) -> dict:
 def timestamps_duplicados(df: pd.DataFrame) -> dict:
     """Linhas que compartilham exatamente o mesmo `created_at`.
 
-    Diferente de `duplicatas_consecutivas`, que procura MEDIDAS repetidas: aqui
-    o que se repete e o INSTANTE. Sao problemas distintos e a distincao importa.
+    Em `duplicatas_consecutivas` o que se repete e a MEDIDA; aqui e o INSTANTE.
+    Duas leituras no mesmo instante ou sao o mesmo registro gravado duas vezes
+    (as medidas coincidem) ou sao leituras reais com carimbo errado (as medidas
+    variam) — `medidas_identicas` separa os casos.
 
-    Duas leituras no mesmo instante podem ser:
-
-    - **o mesmo registro gravado duas vezes** — as medidas tambem coincidem;
-    - **leituras reais com o instante errado** — as medidas variam, e entao o
-      dado de vibracao serve, mas o carimbo de tempo nao.
-
-    O segundo caso e o grave: as leituras entram nas contas de assinatura e de
-    similaridade normalmente, mas nao podem ancorar nada temporal — episodio,
-    frequencia de ocorrencia, janela deslizante. Por isso o retorno separa os
-    dois com `medidas_identicas`.
+    O segundo e o grave: o dado de vibracao serve para assinatura e
+    similaridade, mas nao pode ancorar nada temporal.
     """
     tempo, ident, rot = config.COLUNA_TEMPO, config.COLUNA_ID, config.COLUNA_ROTULO
 
@@ -171,19 +163,20 @@ def outliers_iqr(
     colunas: list[str] | None = None,
     por_rotulo: bool = False,
 ) -> pd.DataFrame:
-    """Conta outliers por coluna pelo criterio de Tukey (IQR).
+    """Conta outliers por coluna pelo criterio de Tukey.
 
-    Limites: Q1 - k*IQR e Q3 + k*IQR, com k = 1.5 (moderado) e 3.0 (extremo).
-    Escolhemos IQR e nao z-score porque varias colunas sao fortemente
-    assimetricas (kurtosis tem mediana 2.5 e maximo 65): a media e o desvio
-    padrao usados pelo z-score ja estao contaminados pelos proprios extremos.
+    Limites Q1 - k*IQR e Q3 + k*IQR, com k = 1,5 (moderado) e 3,0 (extremo).
+    IQR e o *intervalo interquartil*, a distancia entre o 1o e o 3o quartil.
 
-    `por_rotulo=True` calcula os limites dentro de cada `fault`. Faz diferenca:
-    globalmente, toda leitura de um defeito severo parece outlier — o que e
-    esperado, e nao erro de medicao. E justamente essa a distincao que o
-    dashboard precisa mostrar.
+    IQR e nao z-score porque varias colunas sao muito assimetricas (kurtosis tem
+    mediana 2,5 e maximo 65): a media e o desvio que o z-score usa ja vem
+    contaminados pelos proprios extremos.
 
-    NADA e removido ou corrigido aqui. Parte 0 so reporta.
+    `por_rotulo=True` calcula os limites dentro de cada `fault`. Globalmente,
+    toda leitura de defeito severo parece outlier — o que e esperado, nao erro
+    de medicao.
+
+    NADA e removido ou corrigido aqui.
     """
     colunas = colunas or colunas_numericas(df)
 

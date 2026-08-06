@@ -13,12 +13,26 @@ a resposta.
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import yaml
 
 from mp import config
+
+# --------------------------------------------------------------------------
+# As quatro situacoes possiveis
+# --------------------------------------------------------------------------
+#
+# Do ponto de vista do fluxo, as tres ultimas terminam igual: nao ha prescricao
+# e o modelo nao e chamado. Sao nomeadas separadamente porque sao **noticias
+# diferentes** para quem le: dizer "sem documentacao" quando a maquina esta
+# apenas normal seria mentir, e nao ha nada a registrar.
+SITUACAO_OK = "ok"                        # defeito com manual — prescreve
+SITUACAO_ESTADO = "estado"                # normal, teste... nao ha o que corrigir
+SITUACAO_SEM_DOCUMENTO = "sem_documento"  # e defeito, mas falta o manual
+SITUACAO_DESCONHECIDO = "desconhecido"    # rotulo fora do catalogo
 
 
 @functools.lru_cache(maxsize=4)
@@ -94,48 +108,102 @@ def familias_do_documento(documento_id: str, caminho: str | None = None) -> list
     ]
 
 
-def resolver(rotulo: str, caminho: str | None = None) -> dict:
-    """Percurso completo rotulo -> familia -> documento, com o veredito dos guardrails.
+@dataclass(frozen=True)
+class Catalogo:
+    """O percurso `rotulo -> familia -> documento`, ja com o veredito.
 
-    Ponto de entrada unico para o pipeline. Devolve tudo que os guardrails
-    precisam, sem que eles tenham de reabrir o YAML.
+    Substitui o dicionario de nove chaves que a versao anterior devolvia. A
+    decisao esta em `situacao`; `e_defeito` e `prescrever` sao leituras dela,
+    nao campos independentes que poderiam divergir.
     """
-    familia = familia_de(rotulo, caminho)
+
+    rotulo: str
+    familia: str | None
+    documentos: list[dict]
+    situacao: str
+    mensagem: str
+
+    @property
+    def e_defeito(self) -> bool:
+        """Veredito do **G2**. Defeito passa, com manual ou sem."""
+        return self.situacao in (SITUACAO_OK, SITUACAO_SEM_DOCUMENTO)
+
+    @property
+    def prescrever(self) -> bool:
+        """Veredito do **G3**. So o defeito com manual autoriza prescricao."""
+        return self.situacao == SITUACAO_OK
+
+    @property
+    def documento_ids(self) -> list[str]:
+        return [d["id"] for d in self.documentos]
+
+
+def verificar_existencia_conserto(
+    rotulo_ou_familia: str | None, caminho: str | None = None
+) -> Catalogo:
+    """Responde uma pergunta so: **chegou este rotulo — da para prescrever conserto?**
+
+    Recebe um rotulo cru (`"cocked_rotor_2"`) ou o nome da familia, e devolve um
+    `Catalogo`:
+
+        c = verificar_existencia_conserto("cocked_rotor_2")
+
+        c.familia        # "cocked_rotor"
+        c.situacao       # "ok"
+        c.documentos     # [{"id": "Doc6", ...}]
+        c.mensagem       # "1 documento(s): Doc6."
+        c.prescrever     # True
+
+    Sao tres perguntas em sequencia, todas consulta exata ao `fault_map.yaml`:
+
+    1. Que familia e essa?  Nao achou      -> `desconhecido`
+    2. E defeito?           normal, teste  -> `estado`
+    3. Tem manual?          lista vazia    -> `sem_documento`
+
+    Chegou ao fim das tres -> `ok`.
+
+    Ponto de entrada unico do catalogo: e daqui que o G2 e o G3 tiram a resposta,
+    em vez de reabrir o YAML cada um por sua conta. O nome diz o que a funcao
+    decide — se existe conserto documentado —, nao como ela chega la.
+    """
+    if not rotulo_ou_familia:
+        return Catalogo("", None, [], SITUACAO_DESCONHECIDO,
+                        "Sem rotulo para consultar o catalogo.")
+
+    rotulo = str(rotulo_ou_familia).strip()
+    familias = carregar_fault_map(caminho)["familias"]
+    familia = rotulo if rotulo in familias else familia_de(rotulo, caminho)
 
     if familia is None:
-        return {
-            "rotulo": rotulo, "familia": None, "conhecido": False,
-            "is_problem": None, "documentos": [], "cobertura": None,
-            "g2_prossegue": False, "g3_prossegue": False,
-            "motivo": "Rotulo fora do catalogo — registre-o no fault_map.yaml.",
-        }
+        return Catalogo(
+            rotulo, None, [], SITUACAO_DESCONHECIDO,
+            f"'{rotulo}' nao esta no catalogo — registre-o no fault_map.yaml.",
+        )
 
-    dados = carregar_fault_map(caminho)["familias"][familia]
-    problema = bool(dados.get("is_problem", False))
+    dados = familias[familia]
     docs = list(dados.get("documentos") or [])
-    cobertura = dados.get("cobertura")
 
-    if not problema:
-        motivo = (
+    if not dados.get("is_problem", False):
+        return Catalogo(
+            rotulo, familia, docs, SITUACAO_ESTADO,
             f"'{familia}' e um estado da maquina, nao um defeito. "
-            "Nao ha acao corretiva a prescrever."
+            "Nao ha acao corretiva a prescrever.",
         )
-    elif not docs:
-        motivo = (
-            f"Sem documentacao para '{familia}' — registre um documento."
-            + (f" (cobertura {cobertura} em {dados.get('cobertura_parcial_em')}, "
-               "insuficiente para prescrever)" if cobertura == "parcial" else "")
-        )
-    else:
-        motivo = f"'{familia}' tem {len(docs)} documento(s) no catalogo."
 
-    return {
-        "rotulo": rotulo, "familia": familia, "conhecido": True,
-        "is_problem": problema, "documentos": docs, "cobertura": cobertura,
-        "g2_prossegue": problema,
-        "g3_prossegue": problema and bool(docs),
-        "motivo": motivo,
-    }
+    if not docs:
+        # Cobertura parcial conta como ausencia — `eccentric_rotor` aparece no
+        # manual de polias, mas e excentricidade de polia, nao de rotor.
+        parcial = dados.get("cobertura") == "parcial"
+        return Catalogo(
+            rotulo, familia, [], SITUACAO_SEM_DOCUMENTO,
+            f"Sem documentacao para '{familia}' — registre um documento."
+            + (f" (cobertura parcial em {dados.get('cobertura_parcial_em')}, "
+               "insuficiente para prescrever)" if parcial else ""),
+        )
+
+    ids = ", ".join(d["id"] for d in docs)
+    return Catalogo(rotulo, familia, docs, SITUACAO_OK,
+                    f"{len(docs)} documento(s): {ids}.")
 
 
 def tabela_familias(caminho: str | None = None) -> pd.DataFrame:
@@ -166,7 +234,7 @@ def tabela_familias(caminho: str | None = None) -> pd.DataFrame:
 def validar_cobertura(df: pd.DataFrame, caminho: str | None = None) -> dict:
     """Confere que o catalogo cobre todo rotulo presente no DataFrame.
 
-    Um rotulo fora do catalogo nao quebra o pipeline — `resolver` devolve
+    Um rotulo fora do catalogo nao quebra o pipeline — a verificacao devolve
     recusa —, mas e sempre um erro de curadoria: alguem coletou uma condicao
     nova e ninguem registrou. Por isso a checagem e explicita.
     """

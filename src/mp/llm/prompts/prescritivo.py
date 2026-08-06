@@ -93,12 +93,42 @@ def bloco_de_fatos(fatos: dict | None) -> str:
     return "DADOS APURADOS NO HISTORICO (ja calculados, nao recalcule):\n" + "\n".join(linhas)
 
 
+def bloco_de_assunto(familia: str | None, familias=None) -> str:
+    """A primeira linha do prompt: sobre o que e esta conversa.
+
+    **Nem toda sessao sabe o nome do defeito.** Quando ela nasce de um evento de
+    sensor, o kNN apurou a familia e o bloco pode afirma-la. Quando nasce de uma
+    descricao escrita, o que foi identificado e o *procedimento* — e um
+    procedimento pode cobrir varias familias: o Doc1 atende quatro tipos de
+    rolamento, porque o conserto e o mesmo para os quatro.
+
+    Nesse caso nao ha tipo a afirmar. Escrever um deles aqui entregaria ao
+    modelo, como fato ja apurado, a primeira linha de uma lista — e por essa
+    porta o G5 nao olha: ele confere as citacoes da resposta, nao os fatos da
+    pergunta.
+    """
+    familias = list(familias or ([familia] if familia else []))
+
+    if familia:
+        return f"DEFEITO IDENTIFICADO: {familia}"
+
+    if len(familias) > 1:
+        return (
+            "PROCEDIMENTO DESTA CONVERSA: cobre " + ", ".join(familias) + ".\n"
+            "Qual desses tipos e o caso NAO foi apurado. Nao afirme um deles; se "
+            "os trechos ensinam a distinguir, apresente o criterio como criterio."
+        )
+
+    return "PROCEDIMENTO DESTA CONVERSA: o manual fixado para esta conversa."
+
+
 def montar(
     pergunta: str,
-    familia: str,
+    familia: str | None,
     trechos,
     fatos: dict | None = None,
     historico=None,
+    familias=None,
 ) -> list[Mensagem]:
     """Monta as mensagens da resposta prescritiva.
 
@@ -106,8 +136,11 @@ def montar(
     anteriores. Ele entra como **contexto da conversa**, nunca como fonte: o
     prompt diz isso explicitamente, e a regra 1 do sistema continua valendo —
     so os trechos autorizam uma afirmacao tecnica.
+
+    `familia` vazia com `familias` preenchida e a sessao que travou o manual sem
+    ter apurado o tipo — ver `bloco_de_assunto`.
     """
-    blocos = [f"DEFEITO IDENTIFICADO: {familia}"]
+    blocos = [bloco_de_assunto(familia, familias)]
 
     if texto := bloco_de_historico(historico):
         blocos.append(texto)

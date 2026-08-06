@@ -45,7 +45,7 @@ from mp.agente.estado import Sessao, Turno
 from mp.guardrails import rules as g
 from mp.llm import prompts
 from mp.retrieval import rag
-from mp.retrieval.catalog import familias_do_documento, resolver
+from mp.retrieval.catalog import familias_do_documento, verificar_existencia_conserto
 
 MAX_TENTATIVAS = 2
 
@@ -60,18 +60,14 @@ def abrir_sessao(
     evento: dict | None = None,
     diagnostico=None,
 ) -> Sessao:
-    """Roda G0 a G3 e fixa o manual autorizado.
+    """Roda G0 a G3 e fixa o manual. A entrada pelo **sensor**; a outra e
+    `abrir_sessao_por_texto`.
 
-    Acontece **uma vez**. Depois disso o documento esta travado: nenhuma pergunta
-    dos turnos seguintes pode busca-lo em outro lugar.
+    Quem decide a familia e o `diagnostico`, isto e, o kNN sobre os numeros. O
+    `rotulo` avulso serve so a inspecao manual e aos testes.
 
-    **Quem decide a familia e o `diagnostico`**, quando ele vem — ou seja, o kNN
-    sobre os numeros do sensor. O `rotulo` avulso existe so para inspecao manual
-    e para os testes; no fluxo real, o operador nao escolhe a familia numa lista.
-
-    Quando o JSON traz `fault` preenchido, ele e **anotacao a conferir**, nunca
-    ordem: a familia usada e a que os vizinhos indicam, e a divergencia entre as
-    duas vira alerta em vez de sumir.
+    `fault` no JSON e anotacao a conferir, nunca ordem: vale a familia dos
+    vizinhos, e a divergencia vira alerta.
     """
     s = Sessao(rotulo=rotulo or "")
 
@@ -98,10 +94,11 @@ def abrir_sessao(
     # --- G2 e G3: catalogo, nao similaridade -------------------------------
     # A familia vem do kNN quando ha diagnostico; do catalogo quando a sessao
     # foi aberta por rotulo.
+    #Analise
     if diagnostico is not None and diagnostico.familia:
         s.familia = diagnostico.familia
     else:
-        s.familia = resolver(s.rotulo)["familia"]
+        s.familia = verificar_existencia_conserto(s.rotulo).familia
 
     v = g.g2_e_problema(s.familia or s.rotulo)
     s.vereditos_abertura.append(v)
@@ -121,33 +118,54 @@ def abrir_sessao(
     return s
 
 
-def _pergunta_de_investigacao(sessao: Sessao, cliente=None, motor=None) -> str:
-    """O que perguntar ao tecnico para separar os candidatos empatados.
+def _nome_de_familias(familias: list[str], documento: str) -> str:
+    """`["rolamento_inner", ...]` -> `rolamento ×4`. Vem do catalogo, nao do modelo.
 
-    **O conteudo vem de um `SELECT`**, nunca da imaginacao do modelo: as secoes
-    de sintoma dos documentos que empataram. O modelo so redige — e quando nao
-    ha modelo, o sistema mostra os proprios trechos e pergunta de forma generica.
-    Sem LLM a pergunta fica pior; o fluxo continua inteiro.
+    Um documento pode cobrir varias familias — o Doc1 atende quatro tipos de
+    rolamento, e listar as quatro deixa a frase ilegivel. Quando ha prefixo
+    comum ele ja nomeia o conjunto; senao, mostra a primeira e conta o resto.
+
+    **O nome do conjunto, nunca um representante dele.** `rolamento ×4` diz o
+    que se sabe; `rolamento_inner` diria um tipo que ninguem apurou.
     """
-    docs = [d for d, _ in sessao.candidatos[:3]]
-    trechos = rag.secoes_de_sintomas(docs, motor=motor)
+    if not familias:
+        return documento
+    if len(familias) == 1:
+        return familias[0]
 
-    if cliente is None or not trechos:
-        return (
-            "Descreva mais um sintoma: onde a vibracao e mais forte, se houve "
-            "ruido, calor ou folga, e o que muda quando a rotacao sobe."
-        )
-
-    mensagens = prompts.investigacao.montar(sessao.sintomas, trechos, docs)
-    return cliente.gerar(mensagens).texto.strip()
+    # Sem parenteses: o nome entra dentro de uma lista que ja esta entre
+    # parenteses, e aninhar dois niveis fica ilegivel.
+    prefixo = familias[0].split("_")[0]
+    if all(f.startswith(prefixo) for f in familias):
+        return f"{prefixo} ×{len(familias)}"
+    return f"{familias[0]} +{len(familias) - 1}"
 
 
-def _avaliar_candidatos(sessao: Sessao, k: int, cliente=None, motor=None) -> Sessao:
-    """Busca com os sintomas acumulados e decide: travar, investigar ou perguntar.
+def _nome_legivel(documento: str) -> str:
+    """O nome do documento para a tela, resolvido pelo catalogo."""
+    return _nome_de_familias(familias_do_documento(documento), documento)
 
-    O coracao do loop. Roda na abertura e a cada nova informacao, sempre com
-    **todos** os sintomas — e por isso que a conversa converge: a evidencia
-    cresce a cada volta em vez de ser substituida.
+
+def _avaliar_candidatos(sessao: Sessao, k: int, motor=None) -> Sessao:
+    """Busca com os sintomas acumulados e decide: travar o manual ou pedir a escolha.
+
+    Roda na abertura e a cada sintoma novo, sempre com todos os sintomas juntos.
+
+    **A busca aqui e invertida:**
+
+    - aqui: nao sei a familia -> busco em **todos** os manuais -> vence o
+      documento mais apontado pelos trechos. O documento e o *resultado*.
+    - normal: sei a familia -> filtro o manual dela -> busco dentro. O documento
+      e a *entrada*.
+
+    Custa uma garantia: com o filtro, falha sem manual nao tinha onde ser
+    buscada e a recusa era estrutural. Buscando em tudo sempre volta algo, e so
+    o **G4** barra — por isso a tela mostra o score.
+
+    G1T com margem -> `fixar_documento`. Sem margem -> a lista vai para o
+    tecnico, porque manual travado nao muda mais.
+
+    **Nenhum modelo participa:** busca vetorial, `SELECT` e `if`.
     """
     resultado = rag.buscar_por_sintomas(sessao.sintomas, k=k, motor=motor)
     sessao.trechos_de_abertura = resultado.trechos
@@ -156,7 +174,7 @@ def _avaliar_candidatos(sessao: Sessao, k: int, cliente=None, motor=None) -> Ses
     v = g.g4_trechos_relevantes(resultado.trechos)
     sessao.vereditos_abertura.append(v)
     if not v:
-        sessao.investigando = False
+        sessao.aguardando_escolha = False
         sessao.motivo = (
             "Nenhum procedimento trata do que voce descreveu. "
             + v.mensagem
@@ -166,31 +184,23 @@ def _avaliar_candidatos(sessao: Sessao, k: int, cliente=None, motor=None) -> Ses
         return sessao
 
     sessao.candidatos = rag.ranking_documentos(resultado)
+    sessao.nomes_candidatos = {
+        doc: _nome_legivel(doc) for doc, _ in sessao.candidatos
+    }
 
     # --- G1T: a evidencia aponta UM manual? ---------------------------------
     v = g.g1t_evidencia_decide(sessao.candidatos)
     sessao.vereditos_abertura.append(v)
 
     if not v:
-        if sessao.rodadas < config.MAX_RODADAS_INVESTIGACAO:
-            sessao.rodadas += 1
-            sessao.investigando = True
-            sessao.pergunta_investigacao = _pergunta_de_investigacao(
-                sessao, cliente=cliente, motor=motor
-            )
-            sessao.perguntas_investigacao.append(sessao.pergunta_investigacao)
-            sessao.motivo = v.mensagem
-            return sessao
-
-        # Teto esgotado. NAO se escolhe o topo em silencio e NAO se pergunta ao
-        # modelo: mostram-se os candidatos e o tecnico decide. Pessoa escolhendo
-        # nao fere os guardrails — quem eles tiram da decisao e o modelo.
-        sessao.investigando = False
+        # NAO se escolhe o topo em silencio e NAO se pergunta ao modelo qual e:
+        # mostram-se os candidatos, com o trecho que fez cada um aparecer, e o
+        # tecnico decide. Pessoa escolhendo nao fere os guardrails — quem eles
+        # tiram da decisao e o modelo.
         sessao.aguardando_escolha = True
-        sessao.pergunta_investigacao = ""
         sessao.motivo = (
-            f"Depois de {sessao.rodadas} tentativas, a descricao ainda nao separa "
-            f"os candidatos ({v.mensagem}). Escolha qual procedimento seguir — o "
+            f"A descricao nao separa os candidatos ({v.mensagem}). Escolha o "
+            "procedimento que descreve a sua maquina, ou detalhe mais — o "
             "sistema nao vai decidir isso no chute."
         )
         return sessao
@@ -198,19 +208,16 @@ def _avaliar_candidatos(sessao: Sessao, k: int, cliente=None, motor=None) -> Ses
     return fixar_documento(sessao, sessao.candidatos[0][0])
 
 
-def fixar_documento(sessao: Sessao, documento: str) -> Sessao:
-    """Trava o manual e abre a sessao. Ponto unico de travamento.
+def fixar_documento(
+    sessao: Sessao, documento: str, por_escolha: bool = False
+) -> Sessao:
+    """Trava o manual e abre a sessao. **Ponto unico de travamento.**
+    #analise - verificar possibilidade de remover G2 após a limpeza dos dados
+    Duas origens: o G1T aprovando, ou o tecnico escolhendo na lista. Ambas
+    passam pelo mesmo G2; `por_escolha` so muda o texto do `motivo`.
 
-    Chamado pelo `_avaliar_candidatos` quando o G1T aprova, e pela interface
-    quando o **tecnico** escolhe depois do teto de rodadas. Os dois caminhos
-    passam pelo mesmo G2 e produzem a mesma sessao travada — a origem da decisao
-    muda, a garantia nao.
-
-    **Travar e irreversivel dentro da sessao.** Chamar de novo numa sessao ja
-    aberta nao troca o manual: seria a unica porta capaz de furar a regra 1 do
-    `estado.py` — o manual e fixado no turno 1 e nao muda. A investigacao existe
-    justamente para nao precisar destravar depois; quem quiser outro manual
-    encerra a sessao e abre outra.
+    **Irreversivel:** numa sessao ja aberta nao troca o manual — seria a unica
+    porta capaz de furar a regra 1 do `estado.py`.
     """
     if sessao.aberta:
         return sessao
@@ -218,84 +225,82 @@ def fixar_documento(sessao: Sessao, documento: str) -> Sessao:
     familias = familias_do_documento(documento)
 
     sessao.documentos = [documento]
-    sessao.familia = familias[0] if familias else None
     sessao.familias_do_documento = familias
+    # **O tipo so tem nome quando o documento o determina.** Um manual de uma
+    # familia so a identifica; um que cobre varias, nao — o Doc1 atende quatro
+    # tipos de rolamento, e a busca por texto travou o procedimento, nao o tipo.
+    # Gravar `familias[0]` ali seria dar nome de defeito apurado a primeira
+    # linha de uma lista, e o nome sairia trocado ao reordenar o YAML.
+    sessao.familia = familias[0] if len(familias) == 1 else None
+    sessao.nomes_candidatos.setdefault(
+        documento, _nome_de_familias(familias, documento)
+    )
     sessao.peso_documento = dict(sessao.candidatos).get(documento, 0.0)
-    sessao.investigando = False
     sessao.aguardando_escolha = False
-    sessao.pergunta_investigacao = ""
 
-    if sessao.familia is None:
+    if not familias:
         sessao.aberta = False
         sessao.motivo = (
             f"O documento {documento} nao esta ligado a nenhuma familia no "
             "fault_map.yaml — corrija o catalogo."
         )
         return sessao
-
-    # G2 continua valendo: documento de estado nao gera prescricao.
-    v = g.g2_e_problema(sessao.familia)
+    #analise
+    # G2 continua valendo: documento de estado nao gera prescricao. Julga
+    # `familias[0]`, como sempre julgou — a fragilidade de decidir por uma so
+    # quando o documento cobre varias esta registrada e sera tratada a parte.
+    v = g.g2_e_problema(familias[0])
     sessao.vereditos_abertura.append(v)
     if not v:
         sessao.aberta = False
         sessao.motivo = v.mensagem
         return sessao
 
-    sessao.rotulo = sessao.familia
+    # So recebe nome quando ha nome. Manual de varias familias deixa o rotulo
+    # vazio: escrever um dos quatro tipos aqui registraria como falha observada
+    # algo que ninguem observou — nem o operador anotou, nem o kNN apurou.
+    sessao.rotulo = sessao.familia or ""
     sessao.aberta = True
+    # Quem travou muda o que se pode afirmar. "Os sintomas apontam" e verdade
+    # quando o G1T decidiu; quando quem decidiu foi o tecnico, escrever isso
+    # seria atribuir a evidencia uma conclusao que ela justamente nao deu.
     sessao.motivo = (
-        f"Os sintomas apontam {documento} ({sessao.familia}). "
+        f"Voce escolheu {documento} ({sessao.assunto}). "
+        "Ele fica fixado ate o fim da conversa."
+        if por_escolha else
+        f"Os sintomas apontam {documento} ({sessao.assunto}). "
         "Ele fica fixado ate o fim da conversa."
     )
     return sessao
 
 
-def continuar_investigacao(
-    sessao: Sessao, sintoma: str, cliente=None, k: int = 8, motor=None
+def acrescentar_sintoma(
+    sessao: Sessao, sintoma: str, k: int = 8, motor=None
 ) -> Sessao:
     """Mais um sintoma entra e a busca recomeca — com todos, nao so com o novo.
 
-    Este e o passo que faz o loop valer a pena. O problema original era falta de
-    texto: duas palavras dao um vetor fraco e o vencedor sai quase por sorteio.
-    Cada volta acrescenta evidencia; a margem tende a abrir.
+    A indecisao vem de falta de texto: duas palavras dao um vetor fraco e o
+    vencedor sai quase por sorteio. Mais sintoma, mais margem.
 
-    Nao ha garantia de que abra. Desalinhamento e desbalanceamento descrevem
-    sintomas parecidos de verdade, e nenhuma pergunta separa os dois — por isso
-    existe o teto de rodadas e a escolha humana no fim.
+    **Sem teto de tentativas**, porque desalinhamento e desbalanceamento tem
+    sintomas parecidos de verdade e podem nunca se separar. Por isso a lista
+    fica sempre na tela, e nao no fim de um contador.
     """
     if sessao.aberta or not sintoma.strip():
         return sessao
 
     sessao.sintomas.append(sintoma.strip())
-    return _avaliar_candidatos(sessao, k=k, cliente=cliente, motor=motor)
+    return _avaliar_candidatos(sessao, k=k, motor=motor)
 
 
-def abrir_sessao_por_texto(
-    descricao: str, k: int = 8, motor=None, cliente=None
-) -> Sessao:
-    """Abre a conversa a partir da **descricao escrita** do problema.
+def abrir_sessao_por_texto(descricao: str, k: int = 8, motor=None) -> Sessao:
+    """Abre a conversa pela **descricao escrita** do problema.
 
-    O caminho mais comum na pratica: o tecnico chega dizendo "o motor esta
-    vibrando muito e esquentando o mancal". Nao ha JSON, nao ha rotulo, e a
-    pergunta a responder e justamente *qual manual serve aqui*.
+    "O motor esta vibrando e esquentando o mancal": sem JSON nem rotulo, a
+    pergunta e qual manual serve. Aqui so se monta a `Sessao`; o trabalho e do
+    `_avaliar_candidatos`.
 
-    Sem familia, o filtro exato do estagio 1 nao tem como rodar. Entao a ordem
-    se inverte **uma unica vez**: busca em todos os manuais, escolhe o documento
-    que os trechos apontam, e **fixa esse documento**. Da segunda pergunta em
-    diante a conversa volta ao caminho normal, filtrada dentro dele.
-
-    **O que se perde nessa inversao.** Com o filtro por familia, uma falha sem
-    manual nao tinha onde ser buscada — a recusa era estrutural. Aqui a busca
-    sempre devolve alguma coisa, e a unica trava e o G4: se nem o melhor trecho
-    passa do score minimo, a sessao nao abre. E uma garantia mais fraca, e a
-    interface mostra o score para que a diferenca fique visivel.
-
-    **A sessao pode nao abrir de primeira, e isso e deliberado.** Antes, o
-    documento saia de um `max` sobre os pesos — que sempre devolve um vencedor,
-    mesmo com 1,43 contra 1,39. Agora o G1T exige margem; sem ela a sessao entra
-    em **investigacao** e pede mais sintomas, em vez de travar no acaso. Como o
-    manual nao muda depois de travado, travar errado contamina a conversa
-    inteira: e mais barato perguntar.
+    Pode voltar **sem abrir**, com a lista de candidatos. E desfecho normal.
     """
     s = Sessao(rotulo="")
     s.descricao = descricao
@@ -305,7 +310,7 @@ def abrir_sessao_por_texto(
         s.motivo = "Descreva o problema para o sistema procurar o procedimento."
         return s
 
-    return _avaliar_candidatos(s, k=k, cliente=cliente, motor=motor)
+    return _avaliar_candidatos(s, k=k, motor=motor)
 
 
 # --------------------------------------------------------------------------
@@ -316,16 +321,17 @@ def abrir_sessao_por_texto(
 def no_escopo(pergunta: str, sessao: Sessao, motor=None) -> tuple[bool, float, str]:
     """A pergunta trata do assunto do manual fixado?
 
-    Mede a melhor semelhanca da pergunta contra o manual **inteiro** — todas as
-    secoes, nao so as de correcao. Se nem a melhor passa de `LIMIAR_ESCOPO`, a
-    pergunta e de outro assunto e o modelo nao e chamado.
+    Compara contra o manual **inteiro**, nao so as secoes de correcao. Abaixo de
+    `LIMIAR_ESCOPO`, o modelo nao e chamado.
 
-    E diferente do G4, que vem depois: aqui perguntamos *"isto tem a ver com este
-    manual?"*; la, *"estes trechos sustentam uma resposta?"*. Passar aqui e
-    falhar la e o caso comum e util — a pergunta e do assunto, mas o manual nao
-    a responde.
+    Nao e o G4: aqui, "isto tem a ver com este manual?"; la, "estes trechos
+    sustentam uma resposta?".
+
+    Busca por `documentos`, nao por familia: o manual travado e o proprio
+    escopo, e e ele que a pergunta tem de caber.
     """
-    resultado = rag.buscar(pergunta, sessao.familia, k=1, motor=motor)
+    resultado = rag.buscar(pergunta, sessao.familia, k=1, motor=motor,
+                           documentos=sessao.documentos)
     if resultado.vazio:
         return False, 0.0, resultado.motivo or "Nada a comparar no manual."
 
@@ -351,11 +357,16 @@ def responder(
     k: int = 5,
     so_prescritivos: bool = True,
     motor=None,
+    trechos=None,
 ) -> Turno:
     """Uma volta completa: escopo, busca, G4, redacao, G5.
 
-    Acrescenta o turno a sessao e o devolve. `cliente=None` para no no 7 e
-    entrega o trecho cru — util para provar que o conteudo nao depende do modelo.
+    `cliente=None` para no no 7 e entrega o trecho cru — prova que o conteudo
+    nao vem do modelo.
+
+    `trechos` pronto pula os nos 5 e 6. Serve ao resumo de abertura, cuja
+    pergunta e do proprio sistema e ja nasce dentro do manual travado. Do G4 em
+    diante o caminho e o mesmo.
     """
     t0 = time.time()
     turno = Turno(pergunta=pergunta)
@@ -367,24 +378,51 @@ def responder(
         sessao.turnos.append(turno)
         return turno
 
-    # --- no 5: trava de escopo ---------------------------------------------
-    dentro, score, motivo = no_escopo(pergunta, sessao, motor=motor)
-    if not dentro:
-        turno.recusado = True
-        turno.motivo = motivo
-        turno.resposta = motivo
-        turno.segundos = round(time.time() - t0, 2)
-        sessao.turnos.append(turno)
-        return turno
+    if trechos is not None:
+        turno.trechos = list(trechos)
+    else:
+        # --- no 5: trava de escopo -----------------------------------------
+        dentro, score, motivo = no_escopo(pergunta, sessao, motor=motor)
+        if not dentro:
+            turno.recusado = True
+            turno.motivo = motivo
+            turno.resposta = motivo
+            turno.segundos = round(time.time() - t0, 2)
+            sessao.turnos.append(turno)
+            return turno
 
-    # --- no 6: busca dentro do manual fixado -------------------------------
-    busca = (rag.buscar_prescritivo if so_prescritivos else rag.buscar)(
-        pergunta, sessao.familia, k=k, motor=motor
-    )
-    turno.trechos = busca.trechos
+        # --- no 6: busca dentro do manual fixado ---------------------------
+        # `documentos` e o que foi travado. Filtrar pela familia daria a volta
+        # familia -> documento e poderia trazer um manual a mais.
+        busca = (rag.buscar_prescritivo if so_prescritivos else rag.buscar)(
+            pergunta, sessao.familia, k=k, motor=motor,
+            documentos=sessao.documentos,
+        )
+        turno.trechos = busca.trechos
 
     # --- no 7: G4 -----------------------------------------------------------
-    v = g.g4_trechos_relevantes(turno.trechos)
+    #
+    # O G4 mede pertinencia pelo SCORE de similaridade. Quando os trechos vem de
+    # `SELECT`, nao ha score — `secoes_por_campo` devolve 0.0 porque nenhuma
+    # semelhanca foi calculada, e seria desonesto inventar um. Aplicar o limiar
+    # ali reprovaria **sempre**, e reprovaria justamente o conteudo de
+    # pertinencia mais garantida do fluxo: as secoes de sintoma e correcao do
+    # manual que o G3 ja autorizou.
+    #
+    # Entao o no 7 continua existindo e continua registrando veredito — o que
+    # muda e a pergunta que ele faz. Por semelhanca: "o score passa do minimo?".
+    # Por selecao: "as secoes existem?". A trava nao some, muda de natureza.
+    if trechos is not None:
+        v = g.Veredito(
+            "G4", bool(turno.trechos),
+            f"{len(turno.trechos)} secao(oes) escolhidas por tipo dentro de "
+            f"{sessao.manual}. Pertinencia por construcao, nao por score."
+            if turno.trechos else
+            f"{sessao.manual} nao tem secoes dos tipos necessarios.",
+            {"por_selecao": True, "total": len(turno.trechos)},
+        )
+    else:
+        v = g.g4_trechos_relevantes(turno.trechos)
     turno.vereditos.append(v)
     if not v:
         turno.recusado = True
@@ -398,7 +436,7 @@ def responder(
 
     historico = sessao.historico_para_prompt(config.MAX_TURNOS_NO_PROMPT)
     mensagens = prompts.montar(pergunta, sessao.familia, turno.trechos,
-                               historico=historico)
+                               historico=historico, familias=sessao.familias)
     turno.prompt = prompts.texto_enviado(mensagens)
 
     if cliente is None:
@@ -436,8 +474,72 @@ def responder(
             f"{pergunta}\n\n[Aviso do sistema: a resposta anterior foi rejeitada — "
             f"{v.mensagem} As unicas fontes citaveis sao: {disponiveis}.]",
             sessao.familia, turno.trechos, historico=historico,
+            familias=sessao.familias,
         )
 
     turno.segundos = round(time.time() - t0, 2)
     sessao.turnos.append(turno)
+    return turno
+
+
+# --------------------------------------------------------------------------
+# Abertura: o resumo que o sistema da sozinho ao fixar o manual
+# --------------------------------------------------------------------------
+
+# A pergunta que o sistema faz a si mesmo assim que trava o documento. Fixa e
+# versionada aqui, nao montada na tela: e ela que define o que toda conversa
+# comeca respondendo.
+PERGUNTA_DE_ABERTURA = (
+    "Qual e o problema, quais sao os sintomas dele e como corrigir?"
+)
+
+# As secoes que a abertura precisa ter, na ordem em que a resposta as usa. Uma
+# pergunta so — "o problema, os sintomas e a correcao" — precisa de tipos de
+# secao diferentes, e e por tipo que elas sao buscadas.
+CAMPOS_DE_ABERTURA = ("sintomas", "causas", "correcao", "validacao")
+
+
+def _trechos_de_abertura(sessao: Sessao, k: int, motor=None) -> list:
+    """As secoes do manual travado que respondem sintomas **e** correcao.
+
+    **Por `SELECT`, nao por semelhanca:** na busca vetorial, "qual o problema" e
+    "como corrigir" disputam as mesmas vagas do top-k e a correcao fica de fora.
+    Por tipo de secao, a cobertura e garantida por construcao.
+    """
+    achados = rag.secoes_por_campo(sessao.documentos, motor=motor,
+                                   campos=CAMPOS_DE_ABERTURA)
+
+    # Agrupa por campo para o corte nao comer um tipo inteiro: Doc3 tem 6 secoes
+    # de correcao e 1 de sintomas — cortar a lista crua deixaria os sintomas de
+    # fora dependendo da ordem.
+    por_campo: dict[str, list] = {}
+    for t in achados:
+        por_campo.setdefault(t.campo, []).append(t)
+
+    por_vez = max(1, k // max(1, len(por_campo)))
+    escolhidos = []
+    for campo in CAMPOS_DE_ABERTURA:
+        escolhidos.extend(por_campo.get(campo, [])[:por_vez])
+    return escolhidos[:k]
+
+
+def resumo_inicial(sessao: Sessao, cliente=None, k: int = 6, motor=None) -> Turno | None:
+    """Responde problema, sintomas e correcao assim que o manual e fixado.
+
+    O tecnico ia perguntar isso de qualquer jeito.
+
+    **E um turno normal, nao um texto montado a mao:** passa por redacao e G5
+    como os outros. Montado direto do banco, seria a primeira coisa que ele le
+    e a unica sem guardrail.
+
+    Sem `cliente`, degrada para o texto cru das secoes.
+    """
+    if not sessao.aberta or sessao.turnos:
+        return None
+
+    turno = responder(
+        sessao, PERGUNTA_DE_ABERTURA, cliente=cliente, k=k, motor=motor,
+        trechos=_trechos_de_abertura(sessao, k, motor=motor),
+    )
+    turno.abertura = True
     return turno

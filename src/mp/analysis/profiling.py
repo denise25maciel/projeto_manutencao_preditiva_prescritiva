@@ -77,14 +77,13 @@ def perfil_rotulos(df: pd.DataFrame) -> pd.DataFrame:
 def e_estado(rotulo: str) -> bool:
     """True se o rotulo descreve um ESTADO da maquina, nao um defeito.
 
-    Base do guardrail G2. Casa por radical porque os dados trazem variacoes
-    (`normal_2`, `normal_carga_3_3`, `new_normal_6`) e typos (`normla_carga_3_3`).
+    Base do **G2**, o guardrail que encerra o fluxo prescritivo quando nao ha
+    defeito a corrigir. Casa por radical porque os dados trazem variacoes
+    (`normal_2`, `new_normal_6`) e typos (`normla_carga_3_3`).
 
-    **Limite conhecido:** casar por substring nao pega rotulo TRUNCADO. `new_tes`
-    (2 leituras) e uma abreviacao de `new_teste`, mas nao contem o radical
-    `teste` e por isso e classificado como defeito aqui. Por isso a decisao que
-    vale para os guardrails e tomada no nivel da **familia**, nao do rotulo
-    solto — ver `sugerir_familias`, que agrupa `new_tes` em `teste` pelo prefixo.
+    **Limite conhecido:** substring nao pega rotulo truncado — `new_tes` nao
+    contem `teste` e cai como defeito. Por isso a decisao que vale e tomada no
+    nivel da familia, em `sugerir_familias`, que agrupa pelo prefixo.
     """
     r = rotulo.lower()
     return any(radical in r for radical in config.RADICAIS_NAO_PROBLEMA)
@@ -143,14 +142,13 @@ def taxa_amostragem(df: pd.DataFrame) -> dict:
 def ordenar_por_tempo(df: pd.DataFrame, rotulo: str | None = None) -> pd.DataFrame:
     """Recorta um rotulo e devolve suas leituras em ordem cronologica.
 
-    Acrescenta duas colunas derivadas:
+    Acrescenta `sessao` — blocos de coleta separados por mais de
+    `GAP_NOVA_SESSAO_S` — e `delta_s`, o intervalo desde a leitura anterior
+    dentro da sessao.
 
-    - `sessao` — sessoes de coleta separadas por um intervalo maior que
-      `GAP_NOVA_SESSAO_S`. O arquivo nao esta em ordem e mistura campanhas
-      gravadas com semanas de distancia; sem marcar a fronteira, qualquer
-      grafico de linha ligaria o fim de uma sessao ao inicio de outra e
-      inventaria uma transicao que nunca existiu.
-    - `delta_s` — intervalo desde a leitura anterior DENTRO da sessao.
+    A fronteira de sessao existe porque o arquivo mistura campanhas gravadas com
+    semanas de distancia: sem ela, um grafico de linha ligaria o fim de uma ao
+    inicio de outra e inventaria uma transicao.
     """
     tempo = config.COLUNA_TEMPO
     sub = df if rotulo is None else df[df[config.COLUNA_ROTULO] == rotulo]
@@ -170,22 +168,16 @@ def ordenar_por_tempo(df: pd.DataFrame, rotulo: str | None = None) -> pd.DataFra
 def analise_intervalos(df: pd.DataFrame, cortes=None) -> dict:
     """Justifica numericamente onde cortar um episodio.
 
-    Um episodio termina quando a coleta para. Mas "parar" precisa de um numero:
-    quantos segundos sem leitura contam como parada? Escolher esse numero no
-    chute e frageil — a defesa esta em mostrar que os dados o entregam.
+    Um episodio termina quando a coleta para, mas "parar" precisa de um numero
+    de segundos, e no chute ele nao se defende. So contam os intervalos dentro
+    do mesmo rotulo: na troca de rotulo o episodio quebra de qualquer jeito.
 
-    Olhamos so os intervalos **dentro do mesmo rotulo**, que sao os unicos que a
-    regra decide: quando o rotulo muda, o episodio quebra de qualquer jeito.
+    O argumento central esta em `vazio` — a faixa sem nenhuma observacao entre a
+    cadencia normal e as paradas reais. Qualquer corte ali dentro da o mesmo
+    resultado, entao a escolha deixa de ser arbitraria.
 
-    O retorno traz:
-
-    - `estatisticas` — minimo, mediana, media e maximo desses intervalos
-    - `faixas` — quantos intervalos caem em cada faixa de duracao
-    - `vazio` — a faixa SEM nenhuma observacao entre a cadencia normal e as
-      paradas reais. E o argumento central: qualquer corte dentro dela produz
-      exatamente o mesmo resultado, entao a escolha deixa de ser arbitraria
-    - `paradas` — estatisticas so das interrupcoes de verdade
-    - `sensibilidade` — quantos episodios cada corte produziria
+    Traz ainda `estatisticas`, `faixas`, `paradas` (so as interrupcoes de
+    verdade) e `sensibilidade`, quantos episodios cada corte produziria.
     """
     tempo, rot = config.COLUNA_TEMPO, config.COLUNA_ROTULO
 
@@ -285,19 +277,16 @@ def serie_temporal(
 ) -> dict:
     """Serie temporal de um rotulo, pronta para plotar.
 
-    Devolve formato longo — `[created_at, sessao, coluna, valor, minimo, maximo]` —
-    porque e o que o Altair consome direto, com `coluna` virando facet.
+    Formato longo, que e o que o Altair consome direto com `coluna` virando
+    facet.
 
-    **Reamostragem.** Um rotulo pode ter 17 mil leituras; mandar tudo para o
-    navegador trava a pagina. Acima de `max_pontos` agrupamos em blocos
-    consecutivos DENTRO de cada sessao e reportamos mediana, minimo e maximo do
-    bloco. A mediana da a tendencia; a faixa min-max preserva os picos, que em
-    vibracao sao justamente o que interessa — reamostrar so pela media apagaria
-    o impacto isolado que caracteriza defeito de rolamento.
+    Um rotulo pode ter 17 mil leituras e travar o navegador, entao acima de
+    `max_pontos` os pontos viram blocos com mediana, minimo e maximo. A mediana
+    da a tendencia; a faixa min-max preserva os picos, que e o que interessa em
+    vibracao — so a media apagaria o impacto isolado de defeito de rolamento.
 
-    Os blocos sao por POSICAO, nao por janela de tempo: as sessoes estao
-    separadas por ate 122 h, e uma janela temporal fixa produziria milhares de
-    blocos vazios entre elas.
+    Blocos por POSICAO, nao por janela de tempo: as sessoes estao separadas por
+    ate 122 h e uma janela fixa produziria milhares de blocos vazios.
     """
     max_pontos = max_pontos or config.MAX_PONTOS_SERIE
     tempo = config.COLUNA_TEMPO
@@ -358,37 +347,20 @@ def serie_bruta(
 ) -> dict:
     """Um trecho do arquivo **na ordem em que foi lido**, sem nenhum tratamento.
 
-    Diferente de `serie_temporal`, que ordena por data, agrupa por sessao e
-    reamostra. Aqui nada disso acontece:
+    O eixo x e a posicao da linha no arquivo, nao a data; nada e agregado,
+    deduplicado nem reordenado. Existe para tornar visivel o que as outras telas
+    corrigem em silencio: o arquivo nao esta em ordem de data, entao avancar uma
+    linha pode significar voltar semanas no tempo.
 
-    - o eixo x e a **posicao da linha no arquivo**, nao a data
-    - nenhum valor e agregado — cada ponto e uma leitura
-    - nenhuma linha e deduplicada ou reordenada
+    `rotulos` escolhe quais linhas aparecem e nada mais. A posicao fisica e
+    capturada antes do filtro, entao a leitura da linha 90.000 continua desenhada
+    em 90.000 mesmo sendo a terceira do recorte — senao o grafico mentiria sobre
+    onde o trecho esta. Os buracos que o filtro abre viram quebra de `bloco`,
+    para a linha se interromper em vez de atravessar o vao.
 
-    `rotulos` restringe a **quais** linhas aparecem, e so isso. A selecao e uma
-    mascara booleana, que por construcao preserva a ordem do arquivo: escolhe
-    linhas, nunca as reordena nem as renumera. A posicao fisica e capturada
-    antes do filtro e continua sendo o eixo x, entao uma leitura que estava na
-    linha 90.000 continua desenhada em 90.000 mesmo que seja a terceira do
-    recorte. Sem isso o grafico passaria a mentir sobre onde o trecho esta.
-
-    Filtrar abre buracos entre linhas que nao eram vizinhas no arquivo. Esses
-    buracos viram **quebra de bloco** (coluna `bloco`), para a linha do grafico
-    se interromper em vez de atravessar o vao como se a serie fosse continua.
-
-    E a visao mais crua possivel. Ela existe para tornar visivel o que as outras
-    telas ja corrigem em silencio: o arquivo **nao esta em ordem de data**, entao
-    andar uma linha para a frente pode significar voltar semanas no tempo.
-
-    A janela e limitada porque uma leitura por ponto, sem reamostrar, nao cabe no
-    navegador de uma vez — sao 166 mil linhas. A tela navega por trechos.
-
-    Devolve, alem da serie:
-
-    - `faixas` — blocos consecutivos com o mesmo `fault`, para desenhar embaixo
-      do grafico onde cada rotulo comeca e termina
-    - `trocas` — as linhas exatas em que o rotulo mudou, com o salto de tempo
-      correspondente. Salto negativo = a linha seguinte e mais antiga
+    A janela e limitada porque 166 mil pontos sem reamostrar nao cabem no
+    navegador. Devolve tambem `faixas`, os blocos de mesmo `fault`, e `trocas`,
+    as linhas onde o rotulo mudou — salto negativo = a seguinte e mais antiga.
     """
     tempo, rot = config.COLUNA_TEMPO, config.COLUNA_ROTULO
 

@@ -17,13 +17,18 @@ from mp.retrieval.rag import (
     modelo_indexado,
 )
 from mp.retrieval.catalog import (
+    SITUACAO_DESCONHECIDO,
+    SITUACAO_ESTADO,
+    SITUACAO_OK,
+    SITUACAO_SEM_DOCUMENTO,
+    Catalogo,
     carregar_fault_map,
     documentos_de,
     familia_de,
     is_problem,
-    resolver,
     tabela_familias,
     validar_cobertura,
+    verificar_existencia_conserto,
 )
 
 __all__ = [
@@ -40,7 +45,12 @@ __all__ = [
     "familia_de",
     "documentos_de",
     "is_problem",
-    "resolver",
+    "verificar_existencia_conserto",
+    "Catalogo",
+    "SITUACAO_OK",
+    "SITUACAO_ESTADO",
+    "SITUACAO_SEM_DOCUMENTO",
+    "SITUACAO_DESCONHECIDO",
     "tabela_familias",
     "validar_cobertura",
 ]

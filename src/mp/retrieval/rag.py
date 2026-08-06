@@ -42,7 +42,7 @@ CAMPOS_SINTOMA = ("sintomas", "causas", "indicadores", "diagnostico")
 
 @dataclass
 class Trecho:
-    """Um pedaco de manual recuperado, com o endereco para citar."""
+    """Um pedaco de manual recuperado: o texto, de onde veio e quanto casou."""
 
     documento_id: str
     numero: str
@@ -55,18 +55,17 @@ class Trecho:
 
     @property
     def citacao(self) -> str:
-        """O endereco que a resposta tera de citar — e que o G5 vai conferir.
+        """O endereco que a resposta tem de citar — e que o G5 procura no texto gerado.
 
-        **Sem a pagina, de proposito.** O G5 casa exatamente este formato no
-        texto gerado; se a pagina entrasse aqui, o modelo teria de reproduzi-la
-        e poderia errar o numero. A pagina e metadado do banco e e a interface
-        que a acrescenta — ver `referencia`.
+        **Sem a pagina, de proposito:** o G5 casa este formato letra por letra, e
+        cada numero a mais e um numero que o modelo pode errar. A pagina vem do
+        banco e quem a mostra e a interface — ver `referencia`.
         """
         return f"{self.documento_id}, secao {self.numero}"
 
     @property
     def pagina(self) -> str:
-        """A pagina como texto: "4", "4-5" ou vazio quando nao ha paginacao."""
+        """A pagina como texto: `"4"`, `"4-5"`, ou vazio quando nao ha paginacao."""
         if self.pagina_inicio is None:
             return ""
         if self.pagina_fim and self.pagina_fim != self.pagina_inicio:
@@ -75,13 +74,20 @@ class Trecho:
 
     @property
     def referencia(self) -> str:
-        """O endereco completo para mostrar ao tecnico, com a pagina do PDF."""
+        """A citacao mais a pagina do PDF — a versao para o tecnico ler, nao para o G5."""
         pag = self.pagina
         return f"{self.citacao}" + (f" (pag. {pag})" if pag else "")
 
 
 @dataclass
 class Resultado:
+    """O que uma busca devolve — inclusive quando nao acha nada.
+
+    `motivo` e sempre preenchido: com a contagem quando deu certo, com a
+    explicacao quando veio vazio. Recusar e caminho previsto, entao nao ha
+    excecao a capturar; quem chama le `vazio` e mostra `motivo`.
+    """
+
     familia: str | None
     documentos: list[str] = field(default_factory=list)
     trechos: list[Trecho] = field(default_factory=list)
@@ -89,6 +95,7 @@ class Resultado:
 
     @property
     def vazio(self) -> bool:
+        """Nenhum trecho recuperado. O `motivo` diz por que."""
         return not self.trechos
 
 
@@ -98,13 +105,13 @@ class Resultado:
 
 
 def indexar(embedder=None, motor=None, verboso: bool = True) -> dict:
-    """Calcula e grava o embedding de cada trecho.
+    """Transforma cada trecho num vetor e o grava no banco. Roda uma vez.
 
-    Roda uma vez. Sao 168 trechos — segundos com TF-IDF, um pouco mais com o
-    modelo neural.
+    Sao 168 trechos: segundos com TF-IDF, um pouco mais com o modelo neural.
 
-    O embedder e gravado junto (`chunks.embedding_modelo`): comparar vetores de
-    modelos diferentes nao significa nada, entao a busca confere isso depois.
+    Grava tambem **qual** embedder gerou o vetor (`chunks.embedding_modelo`).
+    Vetores de modelos diferentes nao sao comparaveis, e a busca confere isso
+    antes de calcular qualquer distancia.
     """
     embedder = embedder or emb.criar("auto")
 
@@ -137,7 +144,7 @@ def indexar(embedder=None, motor=None, verboso: bool = True) -> dict:
 
 
 def modelo_indexado(motor=None) -> str | None:
-    """Qual embedder gerou os vetores que estao no banco."""
+    """O nome do embedder que gerou os vetores gravados, ou `None` se nao ha vetor."""
     with sessao(motor) as s:
         return s.scalar(
             select(Chunk.embedding_modelo).where(Chunk.embedding.is_not(None)).limit(1)
@@ -149,19 +156,24 @@ _PRONTOS: dict[str, object] = {}
 
 
 def _embedder_pronto(embedder=None, motor=None):
-    """Devolve o embedder ajustado no **corpus completo**.
+    """Entrega o embedder pronto para codificar a pergunta — e guarda para a proxima.
 
-    Este detalhe e critico e ja custou um bug. O `TfidfLsa` aprende o vocabulario
-    e as direcoes do SVD a partir do corpus — ajusta-lo no subconjunto filtrado
-    de uma busca cria um espaco vetorial **diferente** do usado na indexacao, e
-    comparar vetores dos dois nao significa nada. (No caso, nem rodava: 3 trechos
-    davam 2 dimensoes contra as 167 gravadas.)
+    `ajustar(textos)` nao produz vetor: le o corpus e monta a **regra** que
+    converte texto em vetor. No `TfidfLsa` essa regra e o vocabulario mais as
+    direcoes do SVD (*Singular Value Decomposition*, a decomposicao que comprime
+    o vetor esparso), e sem ela `codificar` levanta `RuntimeError`. No
+    `Multilingue` o modelo ja vem treinado e `ajustar` so carrega os pesos.
 
-    A solucao e ajustar sempre nos mesmos 168 trechos, na mesma ordem
-    (`order_by(Chunk.id)`, igual a `indexar`). O resultado e deterministico.
+    "Pronto" e **ajustado nos mesmos trechos da indexacao**, na mesma ordem. Os
+    vetores no banco nasceram desse ajuste; a pergunta so pode ser comparada com
+    eles se passar pelo mesmo. Vocabulario ou eixos diferentes = outro espaco, e
+    cosseno entre espacos distintos e numero sem sentido. Por isso ajusta no
+    corpus completo, nunca no subconjunto filtrado — isso ja custou um bug de 3
+    trechos gerando 2 dimensoes contra as 167 gravadas.
 
-    O embedder neural nao precisa de nada disso — ja vem treinado, e `ajustar` e
-    um no-op. A funcao serve aos dois pela mesma interface.
+    O ajuste nao vai para o disco (o banco guarda os vetores, nao o embedder),
+    entao cada processo refaz. Como depende so do corpus, da para adiantar: a UI
+    aquece na abertura da tela e `indexar()` ja deixa o seu em `_PRONTOS`.
     """
     embedder = embedder or emb.criar("auto")
     if embedder.nome in _PRONTOS:
@@ -170,13 +182,20 @@ def _embedder_pronto(embedder=None, motor=None):
     with sessao(motor) as s:
         textos = list(s.scalars(select(Chunk.texto).order_by(Chunk.id)))
 
+    # Aqui o embedder aprende o espaco: vocabulario + eixos do SVD, no caso do
+    # TF-IDF; carga dos pesos, no caso do modelo neural.
     embedder.ajustar(textos)
     _PRONTOS[embedder.nome] = embedder
     return embedder
 
 
 def limpar_cache_embedder() -> None:
-    """Esquece os embedders ajustados. Use depois de reindexar."""
+    """Esquece os embedders ja ajustados.
+
+    Necessario quando os trechos mudam sem passar por `indexar` — que ja
+    atualiza o cache com o ajuste novo. Sem isto, a busca seguiria usando um
+    ajuste que nao corresponde mais aos textos do banco.
+    """
     _PRONTOS.clear()
 
 
@@ -192,22 +211,41 @@ def buscar(
     embedder=None,
     campos: tuple[str, ...] | None = None,
     motor=None,
+    documentos: list[str] | None = None,
 ) -> Resultado:
     """Os `k` trechos mais parecidos com a pergunta, **dentro** do manual da familia.
 
-    `campos` restringe o tipo de secao — para a pergunta prescritiva, use
-    `CAMPOS_PRESCRITIVOS`.
+    Os dois estagios do topo do modulo: o `SELECT` reduz os 168 trechos aos do
+    manual certo, e o cosseno roda so nesse punhado.
 
-    Devolve `Resultado` vazio, com motivo, quando a familia nao tem manual. Nao
-    levanta excecao: recusar e um caminho previsto, nao um erro.
+    `campos` restringe o tipo de secao (`CAMPOS_PRESCRITIVOS` para "o que
+    fazer"); nao havendo nenhuma daquele tipo, procura no documento inteiro
+    antes de desistir.
+
+    Familia sem manual volta vazia com o motivo — e o **G3**, o guardrail que
+    exige documento no catalogo, e ele acontece aqui, antes de qualquer conta.
+
+    **`documentos` pula o primeiro estagio**, e existe para quem ja travou o
+    manual. Numa sessao aberta por texto o documento e o que foi fixado; ir dele
+    para a familia e da familia de volta para o documento e um desvio que so
+    fecha porque hoje toda familia tem um documento so. No dia em que uma delas
+    tiver dois, o desvio devolve um manual a mais e a busca sai de dentro do que
+    foi travado. Quem sabe qual e o manual passa o manual.
     """
-    if familia is None:
-        return Resultado(None, motivo="Rotulo fora do catalogo.")
+    docs = list(documentos) if documentos is not None else None
 
-    docs = [d["id"] for d in documentos_de(familia)]
+    if docs is None:
+        if familia is None:
+            return Resultado(None, motivo="Rotulo fora do catalogo.")
+        docs = [d["id"] for d in documentos_de(familia)]
+
     if not docs:
         return Resultado(
-            familia, motivo=f"Sem documentacao para '{familia}' — registre um documento."
+            familia,
+            motivo=(
+                f"Sem documentacao para '{familia}' — registre um documento."
+                if familia else "Nenhum manual fixado para esta conversa."
+            ),
         )
 
     # --- estagio 1: filtro exato -------------------------------------------
@@ -282,12 +320,18 @@ def buscar(
 
 
 def buscar_prescritivo(pergunta: str, familia: str | None, k: int = 5, **kwargs):
-    """Busca priorizando as secoes que respondem 'o que fazer'."""
+    """`buscar` limitada as secoes que respondem "o que fazer".
+
+    E a busca do turno prescritivo: correcao, validacao e criterios de aceitacao
+    na frente de qualquer secao descritiva.
+
+    Aceita `documentos=` pelo `**kwargs`, com o mesmo sentido que tem la.
+    """
     return buscar(pergunta, familia, k=k, campos=CAMPOS_PRESCRITIVOS, **kwargs)
 
 
 def _trecho_de(dado: dict, score: float) -> Trecho:
-    """Monta o `Trecho` a partir da linha carregada do banco."""
+    """Converte a linha crua do banco num `Trecho`, com o score ja calculado."""
     return Trecho(
         documento_id=dado["documento_id"], numero=dado["numero"],
         titulo=dado["titulo"], campo=dado["campo"], texto=dado["texto"],
@@ -297,10 +341,10 @@ def _trecho_de(dado: dict, score: float) -> Trecho:
 
 
 def _todos_os_chunks(motor=None) -> tuple[list[dict], str]:
-    """Todos os trechos indexados. Devolve `(dados, erro)` — erro vazio se deu certo.
+    """Carrega os seis manuais inteiros, sem filtro. Devolve `(dados, erro)`.
 
-    Um lugar so para carregar, porque a busca livre e a busca por sintomas usam
-    exatamente o mesmo conjunto: os seis manuais inteiros, sem filtro de familia.
+    `erro` vem vazio quando deu certo. Um lugar so, porque a busca livre e a
+    busca por sintomas partem exatamente do mesmo conjunto.
     """
     with sessao(motor) as s:
         candidatos = list(
@@ -321,23 +365,15 @@ def _todos_os_chunks(motor=None) -> tuple[list[dict], str]:
 
 
 def buscar_livre(pergunta: str, k: int = 8, embedder=None, motor=None) -> Resultado:
-    """Busca em **todos** os manuais, sem filtro de familia.
+    """Busca nos seis manuais de uma vez, sem filtro de familia.
 
-    Serve ao caso em que o tecnico chega descrevendo o problema por escrito, sem
-    evento de sensor: ninguem sabe ainda qual e a falha, entao nao ha familia
-    para filtrar. Sao os proprios trechos que apontam o documento.
+    Para o tecnico que descreve o problema por escrito: sem falha identificada
+    nao ha familia para filtrar, entao sao os trechos que apontam o documento.
 
-    **Isto contorna o estagio 1 e enfraquece a garantia.** A busca por semelhanca
-    nunca volta vazia: mesmo uma pergunta de outro assunto recebe o trecho "menos
-    diferente" de algum manual. Com o filtro por familia essa possibilidade nem
-    existia — sem manual, nao havia subconjunto onde procurar.
-
-    Aqui a unica trava e o **G4**, o score minimo. Por isso quem chama tem de
-    conferir o score antes de tratar o resultado como resposta, e a interface
-    mostra o numero em vez de escondê-lo.
-
-    Depois de escolhido o documento, a conversa volta ao caminho normal: o manual
-    e fixado e as perguntas seguintes sao filtradas dentro dele.
+    **Pular o estagio 1 enfraquece a garantia.** Semelhanca nunca volta vazia:
+    ate pergunta de outro assunto recebe o trecho menos diferente de algum
+    manual. Resta so o **G4**, o score minimo — por isso quem chama confere o
+    score, e a tela mostra o numero em vez de esconder.
     """
     dados, erro = _todos_os_chunks(motor)
     if erro:
@@ -365,10 +401,10 @@ def buscar_livre(pergunta: str, k: int = 8, embedder=None, motor=None) -> Result
 
 
 def documento_predominante(resultado: Resultado) -> tuple[str | None, float]:
-    """Qual documento os trechos apontam, e com que peso.
+    """O documento mais votado pelos trechos. Devolve `(documento, peso)`.
 
-    O voto e ponderado pelo score: tres trechos fracos do Doc5 nao devem vencer
-    um trecho forte do Doc2. Devolve `(documento, soma_dos_scores)`.
+    Cada trecho vota com o proprio score, nao com uma unidade: tres trechos
+    fracos do Doc5 nao devem vencer um trecho forte do Doc2.
     """
     if resultado.vazio:
         return None, 0.0
@@ -382,11 +418,11 @@ def documento_predominante(resultado: Resultado) -> tuple[str | None, float]:
 
 
 def ranking_documentos(resultado: Resultado) -> list[tuple[str, float]]:
-    """Todos os documentos com seu peso, do maior para o menor.
+    """A votacao inteira, do maior peso para o menor.
 
-    `documento_predominante` devolve so o vencedor — e um `max`, que sempre
-    encontra um. Este devolve a **lista**, que e o que permite perguntar a coisa
-    seguinte: *o primeiro ganhou de longe, ou por um fio?*
+    `documento_predominante` e um `max` — sempre acha um vencedor, mesmo num
+    empate tecnico. A lista completa e o que permite ver a diferenca entre o
+    primeiro e o segundo e decidir se ha duvida a resolver com o tecnico.
     """
     if resultado.vazio:
         return []
@@ -404,18 +440,15 @@ def ranking_documentos(resultado: Resultado) -> list[tuple[str, float]]:
 def buscar_por_sintomas(
     sintomas: list[str], k: int = 8, embedder=None, motor=None
 ) -> Resultado:
-    """Busca livre com **varios sintomas**, cada um como uma consulta propria.
+    """Busca livre com varios sintomas: cada um vira uma consulta, e vale o **maior** score.
 
-    A alternativa obvia — juntar tudo numa frase so e embedar de uma vez — tem
-    um defeito conhecido: o vetor resultante e mais ou menos a **media** dos
-    sintomas. O segundo sintoma, que costuma ser o que discrimina, e diluido
-    pelo primeiro. Descrever mais acabaria piorando a busca, que e o oposto do
-    que o loop de investigacao quer.
+    Numa frase so, o vetor cairia perto da media dos sintomas e o segundo — em
+    geral o que discrimina — seria diluido pelo primeiro. Detalhar mais pioraria
+    a busca, o oposto do que se quer.
 
-    Aqui cada sintoma e codificado sozinho e o score de um trecho e o **maior**
-    entre eles. Um trecho que responde fortemente a *um* sintoma continua
-    valendo, mesmo que ignore os outros — que e como um manual funciona: a
-    secao de temperatura fala de temperatura, nao de vibracao.
+    Pelo maior score, o trecho que responde forte a *um* sintoma continua
+    valendo. E como um manual e escrito: a secao de temperatura fala de
+    temperatura, nao de vibracao.
     """
     consultas = [s.strip() for s in sintomas if s and s.strip()]
     if not consultas:
@@ -435,13 +468,30 @@ def buscar_por_sintomas(
             ),
         )
 
-    matriz = np.vstack([d["vetor"] for d in dados])
-    # (n_sintomas, n_chunks) -> o maior por chunk, ao longo dos sintomas.
+    matriz = np.vstack([d["vetor"] for d in dados])          # (n_chunks, 384)
+
+    # Um sintoma de cada vez contra TODOS os trechos. `matriz @ v` multiplica as
+    # 384 componentes uma a uma e soma: sobra um numero por trecho. Como os
+    # vetores sao unitarios, esse numero e o cosseno — de −1 (oposto) a +1
+    # (texto identico), com 0 significando "nada em comum". Na pratica fica
+    # entre 0 e 0,7: pergunta curta nunca e parafrase de uma secao inteira.
     todos = np.vstack([matriz @ v for v in embedder.codificar(consultas)])
+
+    # (n_sintomas, n_chunks): uma linha por sintoma, uma coluna por trecho.
+    # `axis=0` percorre a coluna, entao guarda o melhor sintoma de cada trecho.
+    # Media diluiria: a secao "Mancal Aquecido" faz 0,71 no sintoma de
+    # temperatura e 0,12 no de vibracao, e a media (0,41) a derrubaria no
+    # ranking. Cada secao de manual trata de um assunto so.
     scores = todos.max(axis=0)
 
+    # `argsort` devolve indices, nao valores, e em ordem crescente: `[::-1]`
+    # inverte e `[:k]` corta nos melhores. Os indices apontam para `dados`.
     ordem = np.argsort(scores)[::-1][:k]
     trechos = [_trecho_de(dados[i], float(scores[i])) for i in ordem]
+
+    # `dict.fromkeys` = conjunto que preserva a ordem; `set` embaralharia. Isto
+    # e so a lista de documentos que apareceram — quem RANQUEIA os candidatos e
+    # `ranking_documentos`, que soma os scores por documento.
     docs = list(dict.fromkeys(t.documento_id for t in trechos))
     return Resultado(
         None, docs, trechos,
@@ -450,14 +500,16 @@ def buscar_por_sintomas(
     )
 
 
-def secoes_de_sintomas(
+def secoes_por_campo(
     documentos: list[str], motor=None, campos: tuple[str, ...] = CAMPOS_SINTOMA
 ) -> list[Trecho]:
-    """As secoes que descrevem como cada defeito se manifesta.
+    """Todas as secoes de um tipo, nos documentos dados. Por padrao, as de sintoma.
 
-    E um `SELECT`, nao uma busca por semelhanca. E o que a pergunta de
-    investigacao usa como materia-prima: o modelo redige em cima **disto**, e
-    nao de conhecimento proprio sobre manutencao.
+    E um `SELECT`, nao uma busca por semelhanca: nao ha pergunta, score nem `k` —
+    vem tudo o que existe daquele tipo, em ordem estavel.
+
+    E a materia-prima da pergunta de investigacao. O modelo redige em cima
+    **disto**, nunca do que ele sabe sobre manutencao.
     """
     if not documentos:
         return []
@@ -481,7 +533,11 @@ def secoes_de_sintomas(
 
 
 def como_tabela(resultado: Resultado) -> pd.DataFrame:
-    """Os trechos em DataFrame, para a UI e os notebooks."""
+    """Os trechos em DataFrame, para a UI e os notebooks.
+
+    Resultado vazio devolve as mesmas colunas, sem linha: quem mostra a tabela
+    nao precisa tratar o caso a parte.
+    """
     if resultado.vazio:
         return pd.DataFrame(
             columns=["citacao", "documento", "secao", "pagina", "titulo", "campo",

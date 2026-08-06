@@ -39,25 +39,18 @@ def construir_eventos(
     limite_intervalo_s: float | None = LIMITE_INTERVALO_PADRAO,
     colunas_quebra: tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Agrupa as leituras em eventos.
+    """Agrupa as leituras em eventos. Devolve `(leituras, eventos)`.
 
-    Devolve `(leituras, eventos)`:
+    `leituras` e a entrada ordenada por data, com a coluna `evento`; nada e
+    removido. `eventos` traz uma linha por evento, com inicio, fim e duracao.
 
-    - `leituras` — o DataFrame de entrada ordenado por data, com a coluna
-      `evento` dizendo a que evento cada linha pertence. Nenhuma linha e
-      removida ou alterada.
-    - `eventos`  — uma linha por evento: rotulo, quantas leituras, inicio, fim
-      e duracao.
-
-    A ordenacao por data e obrigatoria e feita aqui. O arquivo bruto e quase
-    todo ordenado, mas tem 51 pontos onde blocos foram emendados fora de ordem;
-    agrupar linhas vizinhas atraves de um desses pontos juntaria leituras
+    Ordena por data aqui porque o arquivo bruto tem 51 pontos onde blocos foram
+    emendados fora de ordem — agrupar por cima de um deles juntaria leituras
     separadas por semanas.
 
-    `colunas_quebra` define o que encerra um evento — por padrao `fault` e `rpm`
-    (ver `config.COLUNAS_QUEBRA_EVENTO`). O rpm importa: a bancada rodava varias
-    rotacoes em sequencia sem trocar o nome da falha, e sem ele um unico "evento"
-    empilhava tres assinaturas de vibracao diferentes.
+    Por padrao quebra em `fault` e `rpm` (`config.COLUNAS_QUEBRA_EVENTO`). O rpm
+    importa: a bancada rodava varias rotacoes sem trocar o nome da falha, e sem
+    ele um "evento" empilhava tres assinaturas de vibracao.
     """
     tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
     colunas_quebra = colunas_quebra or config.COLUNAS_QUEBRA_EVENTO
@@ -96,17 +89,12 @@ def construir_eventos_por_rotulo(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Abordagem alternativa: separa PRIMEIRO, ordena depois.
 
-    Em `construir_eventos` a ordem e: ordenar o arquivo inteiro por data e depois
-    quebrar quando o rotulo (ou o rpm) muda. Aqui e o contrario: separa as
-    leituras pelas mesmas colunas e so entao ordena cada grupo no tempo.
+    Mesmos criterios de quebra que `construir_eventos`; o que muda e a ORDEM das
+    operacoes, e e isso que a comparacao testa.
 
-    Os criterios de quebra sao os mesmos nas duas — o que muda e a ORDEM das
-    operacoes. E isso que a comparacao testa.
-
-    A diferenca nao e de estilo. Na primeira, um rotulo que reaparece semanas
-    depois vira **dois eventos**, porque no meio houve leituras de outro rotulo.
-    Nesta, os dois trechos ficam no **mesmo** evento, ja que dentro do grupo nada
-    muda.
+    Consequencia: um rotulo que reaparece semanas depois vira **dois** eventos
+    la, porque no meio houve outro rotulo, e **um** aqui, porque dentro do grupo
+    nada muda.
 
     Existe para ser comparada com a outra, nao para substitui-la.
     """
@@ -149,18 +137,15 @@ def serie_com_eventos(
 ) -> pd.DataFrame:
     """A serie temporal de uma medida, com o evento de cada ponto.
 
-    Diferente do resumo em `construir_eventos`, que so diz quando cada evento
-    comecou e terminou. Aqui vem o **valor medido** ao longo do tempo, sabendo a
-    qual evento cada ponto pertence — e o que permite ver o dado e a divisao
-    juntos, em vez de so a divisao.
+    `construir_eventos` so diz quando cada evento comecou e terminou; aqui vem o
+    valor medido junto, que e o que permite ver o dado e a divisao ao mesmo
+    tempo.
 
-    A reamostragem agrupa leituras vizinhas **dentro do mesmo evento**, nunca
-    atravessando a fronteira: um ponto do grafico jamais mistura dois eventos.
+    A reamostragem nunca atravessa a fronteira de um evento — um ponto do
+    grafico jamais mistura dois.
 
-    A coluna `paridade` alterna 0 e 1 a cada evento. Serve para o grafico pintar
-    eventos vizinhos com tons diferentes — com centenas de eventos, uma cor por
-    evento seria ilegivel, mas alternar dois tons mostra exatamente onde um
-    termina e o outro comeca.
+    `paridade` alterna 0 e 1 a cada evento, para o grafico pintar vizinhos com
+    tons diferentes. Com centenas de eventos, uma cor por evento seria ilegivel.
     """
     tempo, rotulo = config.COLUNA_TEMPO, config.COLUNA_ROTULO
 
@@ -212,22 +197,14 @@ def series_por_evento(
     coluna_evento: str = "evento",
     max_pontos_por_evento: int = 200,
 ) -> pd.DataFrame:
-    """Serie de cada evento, padronizada e alinhada, para comparar formas.
+    """Serie de cada evento, padronizada e alinhada, para comparar formas no olho.
 
-    Serve para responder "estes dois eventos se parecem?" olhando, e nao so pelo
-    numero de dispersao.
+    **Padronizacao:** cada coluna vira desvios em relacao a media do arquivo
+    INTEIRO, senao `rpm` (0 a 3000) e `z_kurtosis` (2 a 65) nao cabem no mesmo
+    eixo. A regua global e o que torna dois eventos comparaveis.
 
-    Duas decisoes tornam a comparacao possivel:
-
-    **Padronizacao.** Cada coluna e convertida para desvios em relacao a media do
-    arquivo INTEIRO. Sem isso, `rpm` (0 a 3000) e `z_kurtosis` (2 a 65) nao
-    caberiam no mesmo eixo. Usar o arquivo inteiro como regua — e nao cada evento
-    — e o que deixa dois eventos comparaveis entre si.
-
-    **Alinhamento.** O eixo do tempo vira **minutos desde o inicio do evento**.
-    Em data absoluta, cada evento apareceria num ponto diferente da tela e as
-    formas nao poderiam ser sobrepostas mentalmente. A data real de inicio vem
-    junto, na coluna `inicio`, para nao se perder.
+    **Alinhamento:** o eixo x vira minutos desde o inicio do evento, para as
+    formas poderem ser sobrepostas. A data real fica na coluna `inicio`.
 
     Devolve formato longo: uma linha por (evento, coluna, instante).
     """
@@ -289,23 +266,15 @@ def coesao_eventos(
 ) -> pd.DataFrame:
     """Mede o quanto as leituras de dentro de cada evento se parecem entre si.
 
-    Um agrupamento so faz sentido se o que ele junta for parecido. Se um evento
-    reune leituras muito diferentes, ele juntou coisas que nao deveriam estar
-    juntas — e isso da para medir, nao so argumentar.
+    Um agrupamento so faz sentido se o que ele junta for parecido, e isso da
+    para medir em vez de argumentar. Padroniza cada medida pela regua do arquivo
+    INTEIRO — mm/s, graus e Hz nao se somam crus —, tira o ponto medio de cada
+    evento e mede a distancia media das leituras ate ele.
 
-    Como e feito:
+    Dispersao baixa = o evento agrupou bem. Alta = agrupamento duvidoso.
 
-    1. Cada medida de vibracao e padronizada (subtrai a media, divide pelo desvio)
-       usando o arquivo INTEIRO como referencia. Sem isso, colunas em escalas
-       diferentes — mm/s, graus, Hz — nao poderiam ser somadas.
-    2. Para cada evento, calcula-se o ponto medio das suas leituras.
-    3. A `dispersao` e a distancia media das leituras ate esse ponto medio.
-
-    Dispersao baixa = leituras parecidas entre si = o evento agrupou bem.
-    Dispersao alta  = leituras diferentes no mesmo evento = agrupamento duvidoso.
-
-    A padronizacao usa o arquivo inteiro de proposito: assim o numero de dois
-    agrupamentos diferentes pode ser comparado na mesma regua.
+    A regua e global de proposito: assim dois agrupamentos diferentes podem ser
+    comparados pelo mesmo numero.
     """
     rotulo = config.COLUNA_ROTULO
     colunas = colunas or [c for c in config.COLUNAS_ASSINATURA if c in leituras.columns]
@@ -506,21 +475,14 @@ def diagnostico_eventos(
 def analise_corte_interno(leituras: pd.DataFrame, cortes=None) -> dict:
     """Como um corte por tempo agiria sobre os eventos que ja existem.
 
-    A regra nao usa tempo, entao alguns eventos carregam
-    interrupcoes por dentro. Esta funcao olha **so esses intervalos internos** e
-    responde: se passassemos a cortar tambem por tempo, o que mudaria?
+    A regra em uso nao olha tempo, entao alguns eventos carregam interrupcoes
+    por dentro. Aqui so esses intervalos internos entram na conta: dos eventos
+    ja formados, quais se partiriam e em quantos. A tela "Qualidade dos Dados"
+    faz o oposto — varre o arquivo inteiro para escolher um limiar.
 
-    Diferente da analise da tela "Qualidade dos Dados", que examina o arquivo
-    inteiro para escolher um limiar. Aqui o recorte ja e o resultado: dos
-    eventos formados, quais se partiriam e em quantos.
-
-    Devolve:
-
-    - `intervalos`   — todos os intervalos entre leituras dentro de um evento
-    - `estatisticas` — minimo, mediana, media e maximo desses intervalos
-    - `faixas`       — quantos caem em cada faixa, com marcacao das vazias
-    - `vazio`        — a fronteira entre "coleta continua" e "pausa de verdade"
-    - `simulacao`    — para cada corte candidato, quantos eventos sairiam
+    Devolve `intervalos`, `estatisticas`, `faixas` (com marcacao das vazias),
+    `vazio` (a fronteira entre coleta continua e pausa de verdade) e
+    `simulacao`, que diz quantos eventos cada corte candidato produziria.
     """
     tempo = config.COLUNA_TEMPO
 
@@ -607,16 +569,13 @@ def analise_corte_interno(leituras: pd.DataFrame, cortes=None) -> dict:
 def criterios_limiar(intervalos: np.ndarray) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Deriva o limiar de quebra por criterios automaticos, sem escolha visual.
 
-    A defesa de um limiar fica fraca quando ele foi escolhido olhando um grafico.
-    Aqui testamos quatro criterios que calculam o numero sozinhos, e reportamos
-    tambem os que **nao** funcionam — omitir as falhas seria escolher a dedo o
-    criterio que confirma a conclusao.
+    Limiar escolhido olhando um grafico e dificil de defender. Aqui quatro
+    criterios calculam o numero sozinhos, e os que **nao** funcionam tambem sao
+    reportados — omiti-los seria escolher a dedo o que confirma a conclusao.
 
-    Devolve `(criterios, saltos)`:
-
-    - `criterios` — um por linha, com o valor que produz e se e aplicavel
-    - `saltos`    — os maiores saltos relativos entre valores consecutivos, que
-                    e o criterio que de fato funciona nesta distribuicao
+    `criterios` traz um por linha, com o valor e se e aplicavel; `saltos` traz
+    os maiores saltos entre valores consecutivos, unico criterio que funciona
+    nesta distribuicao.
     """
     g = np.asarray(intervalos, dtype=float)
     g = g[~np.isnan(g)]

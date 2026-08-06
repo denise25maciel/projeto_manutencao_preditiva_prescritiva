@@ -114,7 +114,7 @@ Com o venv ativo, a partir da **raiz do projeto**:
 ### Interface Streamlit
 
 ```bash
-streamlit run ui/Analise_de_Dados.py
+streamlit run ui/app.py
 ```
 
 Abre em `http://localhost:8501`. Três telas no menu lateral:
@@ -203,7 +203,7 @@ reimplementam nada. Nada em produção depende deles.
 │   ├── ingestion/            # TRANSFORMA: sensors (eventos), documents (PDF->MD)
 │   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
-│   ├── app.py                # streamlit run ui/Analise_de_Dados.py
+│   ├── app.py                # entrypoint: streamlit run ui/app.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
 │   └── pages/
 ├── requirements.txt          # instalação do ambiente
@@ -308,7 +308,53 @@ quando o PDF não tem texto. A origem fica registrada no front matter de cada `.
 (`origem_texto: pdf | sidecar`), para ninguém confundir transcrição com extração
 automática.
 
+### O `campo` — como o sistema sabe qual seção é a correção
+
+Cada seção numerada é classificada em um **campo canônico** — `sintomas`,
+`diagnostico`, `correcao`, `validacao`, `seguranca`… — e é esse rótulo que
+permite pedir "o que fazer" sem saber de antemão em que seção isso está.
+
+**A classificação é regex no título, não LLM.**
+[`classificar_campo`](src/mp/ingestion/documents.py#L141) compara o título com os
+padrões de `config.CAMPOS_CANONICOS` na conversão do PDF para `.md`. Uma seção
+chamada "19. Correção do Desalinhamento" vira `campo: correcao` porque a palavra
+está no título — nenhum modelo leu o conteúdo para concluir isso. Título que não
+casa com nenhum padrão fica `NULL`.
+
+A marca fica visível no `.md`, como comentário HTML:
+
+```markdown
+#### 19. Correção do Desalinhamento <!-- campo: correcao | pagina: 4 -->
+```
+
+A ingestão lê esse comentário de volta e grava na coluna `chunks.campo`
+([models.py:238](src/mp/db/models.py#L238)), com índice composto
+`(documento_id, campo)` — exatamente os dois filtros que a busca aplica antes de
+tocar em vetor.
+
+**É assim que a busca prescritiva funciona**
+([`buscar_prescritivo`](src/mp/retrieval/rag.py#L322)), em três passos:
+
+1. `SELECT` pelo documento — a família dá o manual, e só os trechos dele entram
+2. filtro por tipo — ficam os de `correcao`, `validacao` e `criterios_aceitacao`
+3. cosseno — entre esses, a pergunta do técnico ordena por semelhança
+
+O sistema **não sabe** que a correção do Doc1 está nas seções 19 a 22. Ele sabe
+que existem trechos do tipo `correcao` e deixa a semelhança decidir quais deles
+respondem àquela pergunta. Nada aqui consulta o `fault_map.yaml` — o campo
+`secoes_correcao` que existe lá **não é lido por nenhuma linha de código**;
+sobrou da curadoria manual da Parte 1 e a classificação por título o tornou
+desnecessário.
+
+**O ponto fraco, e por isso a seção seguinte existe:** se um documento novo
+chamar a seção de "Ações Recomendadas" e nenhum padrão pegar, o `campo` fica
+`NULL` e aquela seção **some da busca prescritiva** — que filtra por tipo. Falha
+em silêncio, sem erro e sem aviso.
+
 ### Campos pendentes
+
+`campos_pendentes` ([documents.py:416](src/mp/ingestion/documents.py#L416)) é a
+checagem que pega isso: lista cada documento sem algum campo canônico.
 
 | Documento | Campo ausente |
 |---|---|
@@ -358,25 +404,42 @@ e cada seta é um *lookup exato*, nunca uma similaridade. Os 151 rótulos crus,
 família correta — `cockecocked_adxl_0` resolve para `cocked_rotor`, `new_tes`
 para `teste`.
 
-É aqui que os guardrails buscam a resposta:
+É aqui que os guardrails buscam a resposta. Quem decide é
+[`verificar_existencia_conserto`](src/mp/retrieval/catalog.py), o ponto de
+entrada único do catálogo:
+G2 e G3 leem o veredito dele em vez de reabrir o YAML cada um por sua conta.
 
-- **G2** lê `is_problem`. Família com `false` é estado, não defeito — o fluxo
-  prescritivo encerra.
-- **G3** lê `documentos`. Lista vazia é recusa, **inclusive quando a cobertura é
-  `parcial`**. Cobertura parcial não autoriza prescrição.
+Ele classifica o rótulo em uma de **quatro situações**. Do ponto de vista do
+fluxo as três últimas terminam igual — sem prescrição, sem chamar o modelo —,
+mas são notícias diferentes para quem lê:
 
-Leitura pelo módulo [src/mp/retrieval/catalog.py](src/mp/retrieval/catalog.py):
+| `situacao` | Exemplo | O que o técnico vê | G2 | G3 |
+|---|---|---|:--:|:--:|
+| `ok` | `cocked_rotor` | o procedimento | ✅ | ✅ |
+| `estado` | `normal`, `teste` | "está operando, não há o que corrigir" | ❌ | — |
+| `sem_documento` | `ventoinha`, `eccentric_rotor` | "é defeito, mas falta o manual — registre" | ✅ | ❌ |
+| `desconhecido` | rótulo fora do catálogo | "condição nova, ninguém registrou" | ❌ | — |
+
+Dizer "sem documentação" quando a máquina está apenas normal seria mentir, e não
+há nada a registrar — por isso as quatro são nomeadas separadamente.
+
+`eccentric_rotor` cai em `sem_documento` mesmo aparecendo no Doc5: cobertura
+**parcial** conta como ausência. É excentricidade de polia, não de rotor.
 
 ```python
-from mp.retrieval import resolver, validar_cobertura
+from mp.retrieval import verificar_existencia_conserto, validar_cobertura
 
-resolver("cocked_rotor_2")
-# {'familia': 'cocked_rotor', 'g2_prossegue': True, 'g3_prossegue': True,
-#  'documentos': [{'id': 'Doc6', ...}], ...}
+c = verificar_existencia_conserto("cocked_rotor_2")
+c.familia, c.situacao, c.prescrever   # ('cocked_rotor', 'ok', True)
+c.documento_ids                       # ['Doc6']
 
-resolver("ventoinha")
-# g3_prossegue=False — 'Sem documentacao para ventoinha — registre um documento.'
+c = verificar_existencia_conserto("ventoinha")
+c.e_defeito, c.prescrever             # (True, False)  — G2 passa, G3 recusa
+c.mensagem  # "Sem documentacao para 'ventoinha' — registre um documento."
 ```
+
+`e_defeito` e `prescrever` são leituras de `situacao`, não campos independentes:
+não há como os dois vereditos divergirem entre si.
 
 `validar_cobertura(df)` confere que todo rótulo do `banner.csv` tem família.
 Hoje: **151 de 151, sem órfãos e sem entradas mortas no catálogo.**

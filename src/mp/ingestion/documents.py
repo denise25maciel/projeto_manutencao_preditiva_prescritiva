@@ -34,26 +34,17 @@ def _sem_acento(texto: str) -> str:
 def extrair_texto(caminho_pdf: Path) -> tuple[str, str, list[int | None]]:
     """Extrai o texto de um PDF, sabendo de que pagina veio cada linha.
 
-    Devolve `(texto, origem, paginas)`, onde `paginas[i]` e o numero da pagina
-    (1-based) da linha `i` de `texto.splitlines()`, ou `None` quando nao da para
-    saber. Origem e:
+    Devolve `(texto, origem, paginas)`, com `paginas[i]` apontando a pagina da
+    linha `i`. Origem e `pdf` (camada de texto), `sidecar` (transcricao ao lado)
+    ou `vazio` (precisaria de OCR, o reconhecimento optico de caracteres).
 
-      - `pdf`      — camada de texto do proprio PDF
-      - `sidecar`  — arquivo `.txt` ao lado, usado quando o PDF e digitalizado
-      - `vazio`    — sem texto e sem sidecar; precisa de OCR
+    A pagina e rastreada porque a resposta cita "Doc2, secao 9.2" — endereco
+    logico —, mas quem esta com o manual impresso procura por pagina. Custa uma
+    lista de inteiros e evita que o numero seja adivinhado, ou gerado pelo LLM.
 
-    **Por que rastrear a pagina.** A resposta cita "Doc2, secao 9.2", que e o
-    endereco logico. Mas quem esta com o manual impresso na mao procura por
-    pagina. Guardar as duas coisas custa uma lista de inteiros e evita que o
-    numero da pagina precise ser adivinhado depois — ou, pior, gerado pelo
-    modelo de linguagem.
-
-    **Por que o sidecar existe:** um dos procedimentos veio escaneado, so com
-    imagens e sem camada de texto. Rodar OCR exigiria o binario do Tesseract,
-    que nao e resolvivel por `pip` e quebraria o "clone limpo". Em vez disso o
-    conversor aceita uma transcricao manual em `data/raw/<nome>.txt`, e marca a
-    origem no front matter para ninguem confundir com extracao automatica.
-    Transcricao manual **nao tem pagina**: ali as paginas saem todas `None`, e o
+    O sidecar existe porque um procedimento veio escaneado e rodar OCR exigiria
+    o Tesseract, que `pip` nao resolve e quebraria o clone limpo. A transcricao
+    manual em `data/raw/<nome>.txt` **nao tem pagina**: sai tudo `None`, e o
     sistema diz "pagina nao disponivel" em vez de inventar uma.
     """
     from pypdf import PdfReader
@@ -125,21 +116,18 @@ class Secao:
 def _e_cabecalho(numero: str, titulo: str, proximo_topo: int, topo_atual: int) -> bool:
     """Distingue titulo de secao de item de lista numerada.
 
-    Necessario porque os procedimentos usam listas ordenadas dentro das secoes
-    ("1. Desligar o equipamento."), que casam com o mesmo regex do titulo.
+    Os procedimentos usam listas ordenadas dentro das secoes ("1. Desligar o
+    equipamento."), que casam com o mesmo regex do titulo. Dois testes, ambos
+    obrigatorios:
 
-    Dois testes, ambos obrigatorios:
+    **Posicional** — secao de topo so vale se o numero for o proximo da
+    sequencia; subsecao, se pertencer ao topo aberto.
 
-    **Posicional** — uma secao de topo so e valida se o numero for exatamente o
-    proximo da sequencia; uma subsecao, se pertencer a secao de topo aberta.
-
-    **Pontuacao** — o titulo nao pode terminar em `.`, `;` ou `:`. Sozinho, o
-    teste posicional falha num caso real: a secao 5 do Doc2 tem uma lista de 7
-    passos, e o item "6. Utilizar os EPIs adequados." casa com o proximo topo
-    esperado. Ele era aceito como secao 6, consumia o numero e fazia a secao 6
-    verdadeira ("Diagnostico Inicial") e suas subsecoes virarem corpo de texto —
-    o documento perdia dois campos que de fato possui. Nenhum titulo de secao
-    dos seis procedimentos termina em pontuacao; todo item de lista termina.
+    **Pontuacao** — titulo nao termina em `.`, `;` ou `:`. Sozinho, o posicional
+    falha num caso real: "6. Utilizar os EPIs adequados." era aceito como secao
+    6 do Doc2, consumia o numero e derrubava a secao 6 verdadeira para corpo de
+    texto. Nenhum titulo dos seis procedimentos termina em pontuacao; todo item
+    de lista termina.
     """
     if titulo.rstrip().endswith((".", ";", ":")):
         return False
@@ -446,14 +434,12 @@ def campos_pendentes(docs: list[dict]) -> pd.DataFrame:
 def cobertura_por_familia(docs: list[dict], familias_no_banner) -> pd.DataFrame:
     """Cruza cada familia de `fault` do banner.csv com o documento que a cobre.
 
-    Esta e a tabela que o guardrail **G3** consulta: familia sem documento
-    encerra o fluxo prescritivo com a mensagem padronizada, sem chamar o LLM.
+    E a tabela que o **G3** consulta — o guardrail que exige documento no
+    catalogo. Familia sem documento encerra o fluxo sem chamar o LLM.
 
-    `cobertura` assume tres valores:
-      - `documentado`  — ha procedimento dedicado
-      - `parcial`      — o fenomeno aparece num documento de outro componente
-                         (ver `config.COBERTURA_PARCIAL`); nao vale para G3
-      - `sem_documento`— G3 recusa
+    `cobertura` e `documentado` (procedimento dedicado), `parcial` (o fenomeno
+    aparece num documento de outro componente, e nao vale para o G3) ou
+    `sem_documento`.
     """
     titulos = {d["documento"]: d["titulo"] for d in docs}
     existentes = set(titulos)

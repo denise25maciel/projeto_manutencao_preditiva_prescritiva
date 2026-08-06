@@ -27,6 +27,9 @@ from mp import config  # noqa: E402
 # Import barato: os SDKs so sao carregados dentro de cada cliente, na hora de
 # conectar. Aqui vem apenas o texto que descreve cada provedor.
 from mp.llm.client import DESCRICAO as DESCRICAO_PROVEDOR  # noqa: E402
+# O minimo do G4. A tela mostra ao lado de cada score para o numero poder ser
+# comparado com alguma coisa; reexportado aqui porque a UI nao importa `mp`.
+from mp.guardrails.rules import SCORE_MINIMO_CHUNK  # noqa: E402
 from mp.ingestion import (  # noqa: E402
     analise_corte_interno,
     comparar_abordagens,
@@ -525,9 +528,26 @@ def r_rotulos_de(familia: str) -> list[str]:
 def _embedder_aquecido():
     """Deixa o embedder ajustado antes da primeira pergunta.
 
+    **Chamada pelo efeito colateral, nao pelo retorno.** Quem chama descarta o
+    valor de proposito: `rag._embedder_pronto()` guarda o embedder ajustado num
+    cache do proprio `rag` (`_PRONTOS`, indexado pelo nome do modelo), e e de la
+    que a busca o pega depois. Ninguem repassa o objeto — `abrir_sessao_por_texto`
+    e companhia nao recebem `embedder`, deixam o `rag` resolver, e o `rag`
+    encontra o ajuste ja feito. Passar o objeto de mao em mao pela UI so
+    acrescentaria um parametro a cada assinatura do caminho.
+
+    O retorno existe porque `_embedder_pronto` devolve o embedder e nao custa
+    nada repassar — quem quiser inspecionar o modelo carregado tem por onde.
+
     `cache_resource` e nao `cache_data`: e um objeto com pesos, nao um valor
     serializavel. Sem isso, a primeira busca da sessao levaria um minuto
     carregando o modelo enquanto a tela parece travada.
+
+    Sao dois caches empilhados, o do Streamlit e o `_PRONTOS`, e hoje isso e so
+    redundancia inofensiva — os dois vivem no mesmo processo. Vira armadilha no
+    dia em que a tela de documentos (Parte 6) permitir reindexar: `rag` tem
+    `limpar_cache_embedder()`, mas ele nao alcanca o cache do Streamlit. Ali sera
+    preciso chamar tambem `_embedder_aquecido.clear()`.
     """
     from mp.retrieval import rag
 
@@ -629,39 +649,44 @@ def _cliente(usar_llm: bool, config_llm: dict | None):
     return criar(provedor, **opcoes)
 
 
-def abrir_conversa_por_texto(descricao: str, k: int = 8, usar_llm: bool = False,
-                             config_llm: dict | None = None):
+def abrir_conversa_por_texto(descricao: str, k: int = 8):
     """O caminho principal: o tecnico descreve o problema, o sistema acha o manual.
 
-    Pode nao achar de primeira: quando dois manuais empatam, a sessao volta em
-    **investigacao**, com uma pergunta a fazer ao tecnico. O `cliente` serve so
-    para redigir essa pergunta; sem ele, o texto e generico e o fluxo segue.
+    Pode nao achar de primeira: quando os manuais empatam, a sessao volta com a
+    **lista de candidatos** e a escolha e do tecnico. Nao ha `cliente` aqui —
+    nenhum modelo participa de escolher o manual.
     """
     from mp.agente import abrir_sessao_por_texto
 
     _embedder_aquecido()
-    return abrir_sessao_por_texto(
-        descricao, k=k, cliente=_cliente(usar_llm, config_llm)
-    )
+    return abrir_sessao_por_texto(descricao, k=k)
 
 
-def continuar_conversa_investigacao(sessao, sintoma: str, k: int = 8,
-                                    usar_llm: bool = False,
-                                    config_llm: dict | None = None):
-    """Mais um sintoma entra na investigacao e a busca recomeca com todos."""
-    from mp.agente import continuar_investigacao
+def detalhar_sintoma(sessao, sintoma: str, k: int = 8):
+    """Mais um sintoma entra e a busca recomeca com todos — sem teto de vezes."""
+    from mp.agente import acrescentar_sintoma
 
     _embedder_aquecido()
-    return continuar_investigacao(
-        sessao, sintoma, k=k, cliente=_cliente(usar_llm, config_llm)
-    )
+    return acrescentar_sintoma(sessao, sintoma, k=k)
 
 
 def escolher_documento(sessao, documento: str):
-    """O tecnico escolhe o manual quando o sistema nao conseguiu decidir."""
+    """O tecnico escolhe o manual quando a evidencia nao separou os candidatos."""
     from mp.agente import fixar_documento
 
-    return fixar_documento(sessao, documento)
+    return fixar_documento(sessao, documento, por_escolha=True)
+
+
+def resumo_de_abertura(sessao, usar_llm: bool = False,
+                       config_llm: dict | None = None, k: int = 6):
+    """Problema, sintomas e correcao, assim que o manual e fixado.
+
+    E um turno normal — passa por G4, redacao e G5 —, so que a pergunta foi do
+    sistema, nao do tecnico.
+    """
+    from mp.agente import resumo_inicial
+
+    return resumo_inicial(sessao, cliente=_cliente(usar_llm, config_llm), k=k)
 
 
 def responder_turno(sessao, pergunta: str, usar_llm: bool,

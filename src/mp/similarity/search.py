@@ -130,16 +130,12 @@ class Indice:
                          percentil: float = 99.0) -> float:
         """De quao longe pode estar o vizinho mais proximo e ainda valer.
 
-        Tiramos uma amostra do proprio historico e medimos a distancia de cada
-        ponto ao vizinho mais proximo **que nao seja ele mesmo**. Um evento
-        legitimo do mesmo tipo cai dentro dessa faixa; um evento de outra coisa,
-        nao.
+        Mede, numa amostra do historico, a distancia de cada ponto ao vizinho
+        mais proximo que nao seja ele mesmo. Evento legitimo cai nessa faixa.
 
-        O percentil 99 e deliberadamente frouxo. O G1 existe para barrar o
-        **absurdo** — uma maquina diferente, um sensor trocado —, nao para
-        decidir entre falhas parecidas. Apertar aqui faria o sistema recusar
-        casos legitimos, que e o erro mais caro: o tecnico fica sem resposta
-        quando havia uma.
+        O percentil 99 e frouxo de proposito: o **G1** barra o absurdo — outra
+        maquina, sensor trocado —, nao decide entre falhas parecidas. Apertar
+        aqui recusaria casos legitimos, que e o erro mais caro.
         """
         n = X.shape[0]
         idx = np.random.default_rng(42).choice(n, size=min(amostra, n), replace=False)
@@ -224,14 +220,13 @@ def avaliar_por_grupo(
 ) -> dict:
     """Acuracia segurando o **rotulo inteiro** fora do treino.
 
-    Validacao ingenua (dividir linhas ao acaso) infla o numero: leituras
-    consecutivas do mesmo ensaio caem dos dois lados da divisao e o vizinho mais
-    proximo de uma leitura de teste e a leitura de treino gravada dois segundos
-    antes. Isso mede autocorrelacao, nao capacidade de generalizar.
+    Dividir linhas ao acaso infla o numero: leituras consecutivas do mesmo
+    ensaio caem dos dois lados, e o vizinho mais proximo de uma leitura de teste
+    e a de treino gravada dois segundos antes. Isso mede autocorrelacao, nao
+    generalizacao.
 
-    Aqui, para cada rotulo, todas as suas leituras saem do indice e ele e
-    reconstruido sem elas. E a pergunta honesta: **chega uma falha que o sistema
-    nunca viu com esse nome — ele acerta a familia?**
+    Aqui cada rotulo sai inteiro do indice, que e reconstruido sem ele: chega
+    uma falha que o sistema nunca viu com esse nome — acerta a familia?
     """
     from mp.retrieval.catalog import familia_de
 

@@ -21,6 +21,7 @@ import streamlit as st
 
 import _dados as D
 
+
 D.configurar_pagina("Diagnostico", "🩺")
 
 st.title("🩺 Diagnostico e Conversa")
@@ -46,7 +47,7 @@ with st.sidebar:
     st.header("Busca")
     k_vizinhos = st.slider("Vizinhos consultados", 5, 100, 25, step=5)
     k_trechos = st.slider("Trechos por resposta", 1, 10, 5)
-
+    #analisar
     if st.session_state.get("sessao"):
         st.divider()
         if st.button("Encerrar sessao", width="stretch"):
@@ -70,26 +71,16 @@ if sessao is None:
     with aba_texto:
         st.markdown(
             """
-Escreva o que voce esta vendo na maquina. O sistema procura nos seis
-procedimentos, escolhe o que trata daquilo e abre a conversa nele.
+Escreva o que voce esta vendo na maquina. O sistema procura nas documentações da empresa.
+
 
 Nao precisa saber o nome da falha — descobrir isso e o trabalho do sistema.
 Quanto mais concreto o sintoma, melhor: **onde**, **quando** e **o que mudou**.
 """
         )
 
-        exemplos = [
-            "O motor esta vibrando muito na direcao radial e o mancal esquentou.",
-            "Depois que trocamos o acoplamento, apareceu vibracao no sentido axial.",
-            "A correia esta escorregando e faz um chiado quando parte.",
-            "Tem um ruido de impacto no rolamento, parece batida a cada volta.",
-            "A polia parece torta, balanca quando gira devagar.",
-        ]
-        escolha = st.selectbox("Exemplos", ["(escrever a minha)"] + exemplos)
-
         descricao = st.text_area(
             "Descricao do problema",
-            value="" if escolha.startswith("(") else escolha,
             placeholder="Ex.: o motor esta vibrando e o mancal do lado do acoplamento "
                         "esquentou depois da ultima manutencao...",
             height=140,
@@ -100,9 +91,7 @@ Quanto mais concreto o sintoma, melhor: **onde**, **quando** e **o que mudou**.
                 st.warning("Escreva a descricao do problema.")
                 st.stop()
             with st.spinner("Procurando nos seis manuais..."):
-                nova = D.abrir_conversa_por_texto(
-                    descricao, k=8, usar_llm=usar_llm, config_llm=cfg
-                )
+                nova = D.abrir_conversa_por_texto(descricao, k=8)
             st.session_state["sessao"] = nova
             st.session_state.pop("diagnostico", None)
             st.rerun()
@@ -170,12 +159,12 @@ if sessao.origem == "texto":
     st.subheader("A conversa ate aqui")
 
     # ---------------------------------------------------------------------
-    # A investigacao como CONVERSA, nao como painel.
+    # A escolha do manual como CONVERSA, nao como painel.
     #
     # O que o tecnico escreveu tem de pesar mais na tela do que o que o sistema
     # respondeu — e a fala dele que conduz. Por isso o sintoma vai em texto
     # normal na mensagem do usuario, e tudo que e maquinaria do sistema (margem,
-    # share, candidatos, rodada) desce para `st.caption`, em cinza pequeno.
+    # share, pesos) desce para `st.caption`, em cinza pequeno.
     #
     # Nada de `st.error` ou `st.success` aqui: caixa colorida de largura inteira
     # rouba a atencao da mensagem que importa.
@@ -185,15 +174,7 @@ if sessao.origem == "texto":
             st.markdown(sintoma)
             st.caption("o que voce descreveu" if i == 0 else f"sintoma {i + 1}")
 
-        if i < len(sessao.perguntas_investigacao):
-            with st.chat_message("assistant"):
-                st.markdown(sessao.perguntas_investigacao[i])
-                st.caption(
-                    "Ainda ha mais de um procedimento possivel — perguntei para "
-                    "estreitar."
-                )
-
-    if sessao.situacao == "investigando":
+    if sessao.situacao == "escolhendo":
         veredito = next(
             (v for v in reversed(sessao.vereditos_abertura) if v.id == "G1T"), None
         )
@@ -202,51 +183,83 @@ if sessao.origem == "texto":
             f"margem {d.get('margem', 0):.0%} "
             f"(min {D.config.MARGEM_MINIMA_DOCUMENTO:.0%}) · "
             f"evidencia no 1o {d.get('share', 0):.0%} "
-            f"(min {D.config.SHARE_MINIMO_DOCUMENTO:.0%}) · "
-            f"rodada {sessao.rodadas}/{D.config.MAX_RODADAS_INVESTIGACAO} · "
-            + " ".join(f"`{doc}` {p:.2f}" for doc, p in sessao.candidatos[:4])
+            f"(min {D.config.SHARE_MINIMO_DOCUMENTO:.0%})"
         )
 
-        if sessao.aguardando_escolha:
-            with st.chat_message("assistant"):
-                st.markdown(
-                    "Nao consegui separar os candidatos com o que voce contou. "
-                    "**A escolha e sua** — nao vou decidir isso no chute."
-                )
-                st.caption(resumo_evidencia)
-
-            escolha = st.radio(
-                "Qual procedimento seguir?",
-                [doc for doc, _ in sessao.candidatos[:3]],
-                format_func=lambda doc: f"{doc} — peso {dict(sessao.candidatos)[doc]:.2f}",
-                key="escolha_manual",
-            )
-            if st.button("Seguir com este", type="primary"):
-                st.session_state["sessao"] = D.escolher_documento(sessao, escolha)
-                st.rerun()
-        else:
+        with st.chat_message("assistant"):
+            st.markdown(sessao.aviso_de_pouca_informacao)
             st.caption(resumo_evidencia)
-            resposta = st.chat_input("Responda aqui — quanto mais detalhe, melhor")
-            if resposta:
-                with st.spinner("Refazendo a busca com todos os sintomas..."):
-                    st.session_state["sessao"] = D.continuar_conversa_investigacao(
-                        sessao, resposta, k=8, usar_llm=usar_llm, config_llm=cfg,
-                    )
-                st.rerun()
 
-        with st.expander("Por que perguntar em vez de escolher o melhor"):
+        # -----------------------------------------------------------------
+        # A lista inteira, nao os tres primeiros.
+        #
+        # O peso e a SOMA dos scores dos trechos daquele manual entre os `k`
+        # recuperados, entao um documento com quatro trechos medios passa a
+        # frente de um com um trecho otimo. Cortar a lista em tres esconderia
+        # justamente esse caso; por isso todos aparecem, e ao lado do peso vem
+        # o **melhor trecho**, que e o numero que nao sofre desse efeito.
+        #
+        # Cada candidato mostra o pedaco de manual que o fez aparecer. E o que
+        # torna a escolha informada em vez de um sorteio entre codigos: o
+        # tecnico le o texto e reconhece — ou nao — a propria maquina.
+        # -----------------------------------------------------------------
+        st.caption("**Qual destes descreve a sua maquina?**")
+        melhores = sessao.melhor_trecho_por_documento
+
+        for doc, peso in sessao.candidatos:
+            trecho = melhores.get(doc)
+            with st.container(border=True):
+                c1, c2 = st.columns([5, 1], vertical_alignment="center")
+                with c1:
+                    st.markdown(f"**{sessao.nomes_candidatos.get(doc, doc)}**")
+                    legenda = f"`{doc}` · peso {peso:.2f}"
+                    if trecho is not None:
+                        legenda += (
+                            f" · melhor trecho {trecho.score:.2f} "
+                            f"({trecho.referencia})"
+                        )
+                    st.caption(legenda)
+                with c2:
+                    if st.button("Seguir", key=f"seguir_{doc}", width="stretch"):
+                        st.session_state["sessao"] = D.escolher_documento(sessao, doc)
+                        st.rerun()
+
+                if trecho is not None:
+                    texto = " ".join(trecho.texto.split())
+                    if len(texto) > 320:
+                        texto = texto[:320].rsplit(" ", 1)[0] + "..."
+                    st.caption(texto)
+
+        # O campo de texto vem DEPOIS da lista: detalhar e a alternativa a
+        # escolher, nao o caminho obrigatorio. Sem teto de vezes — quem decide
+        # quando parar de detalhar e o tecnico.
+        resposta = st.chat_input(
+            "Ou conte mais — quanto mais detalhe, maior a chance de eu decidir sozinho"
+        )
+        if resposta:
+            with st.spinner("Refazendo a busca com todos os sintomas..."):
+                st.session_state["sessao"] = D.detalhar_sintoma(sessao, resposta, k=8)
+            st.rerun()
+
+        with st.expander("Por que a lista em vez de escolher o melhor"):
             st.markdown(
                 """
 `documento_predominante` e um `max`: **sempre** ha um vencedor, mesmo com 1,43
-contra 1,39. Era assim que uma pergunta ampla travava num manual por acaso.
+contra 1,39. Era assim que uma descricao ampla travava num manual por acaso — e,
+uma vez travado, o manual nao muda mais durante a conversa.
 
-O **G1T** exige duas coisas: **margem** (ganhou do 2o) e **share** (concentra a
-evidencia). A segunda pega o caso que a primeira nao ve — pesos
-[1,0; 0,5; 0,5; 0,5; 0,5] tem margem folgada e ainda deixam quatro manuais de pe.
+O **G1T** exige duas coisas antes de travar: **margem** (ganhou do 2o) e
+**share** (concentra a evidencia). A segunda pega o caso que a primeira nao ve —
+pesos [1,0; 0,5; 0,5; 0,5; 0,5] tem margem folgada e ainda deixam quatro manuais
+de pe. Reprovar aqui nao e recusa: e passar a decisao para voce.
 
-O que continua sendo codigo, nao modelo: **quem decide se ha empate** (G1T),
-**sobre o que perguntar** (`SELECT` nas secoes de sintomas) e **quem decide no
-fim**, se a duvida persistir — voce.
+**Nao ha rodada de investigacao.** O sistema nao gasta perguntas antes de
+mostrar a lista, porque quem esta na maquina costuma reconhecer o defeito assim
+que le os trechos. Detalhar continua valendo, quantas vezes quiser — se a margem
+abrir, o sistema trava sozinho e a lista some.
+
+Nenhum modelo participa desta tela: o ranking e busca vetorial, o empate e um
+`if`, os nomes vem do `fault_map.yaml` e a decisao final e sua.
 """
             )
 
@@ -258,16 +271,20 @@ fim**, se a duvida persistir — voce.
     # Agora o detalhe fica em expansor: quem quiser auditar abre.
     if sessao.aberta:
         with st.chat_message("assistant"):
+            # Cobrindo varias familias, a frase diz o CONJUNTO e avisa que o
+            # tipo nao foi apurado. Escrever um dos nomes mandaria o tecnico
+            # olhar uma peca especifica que ninguem determinou — o que a busca
+            # por texto identificou foi o procedimento.
             familias_extra = (
                 " Ele cobre "
                 + ", ".join(f"`{f}`" for f in sessao.familias_do_documento)
-                + ", e a conversa vale para todas."
+                + " — o procedimento e o mesmo para todas, e qual delas e o seu"
+                " caso nao foi apurado."
                 if len(sessao.familias_do_documento) > 1 else ""
             )
             st.markdown(
                 f"Encontrei o procedimento: **{sessao.manual}** "
-                f"(`{sessao.familia}`).{familias_extra} "
-                "Pode perguntar o que quiser sobre ele."
+                f"(`{sessao.assunto}`).{familias_extra}"
             )
             st.caption(
                 f"🔒 travado ate o fim da conversa · melhor trecho "
@@ -287,6 +304,23 @@ fim**, se a duvida persistir — voce.
                     ]
                 ),
                 width="stretch", hide_index=True,
+            )
+            # Numero solto nao se interpreta: 0,42 e bom ou ruim? A regua vem
+            # junto — o teto teorico, o minimo do G4 e o que esta tabela
+            # alcancou. Sem isso o tecnico so consegue comparar as linhas entre
+            # si, e nao sabe se a melhor delas ja e fraca.
+            scores = [t.score for t in sessao.trechos_de_abertura]
+            st.caption(
+                f"**Escala:** a similaridade e o cosseno entre a sua descricao e "
+                f"o trecho, de −1 a +1 · **+1** = mesmo texto, **0** = nada em "
+                f"comum · minimo exigido pelo G4: **{D.SCORE_MINIMO_CHUNK:.2f}**"
+            )
+            st.caption(
+                f"**Nesta busca:** melhor {max(scores):.3f} · pior "
+                f"{min(scores):.3f} · {sum(s >= D.SCORE_MINIMO_CHUNK for s in scores)} "
+                f"de {len(scores)} acima do minimo. Pergunta curta contra secao "
+                f"inteira de manual raramente passa de 0,7 — nao espere valores "
+                f"perto de 1."
             )
         st.markdown(
             """
@@ -425,22 +459,24 @@ if not sessao.aberta:
 # A conversa
 # ==========================================================================
 
+# Achar o manual nao e resposta. Assim que ele e fixado, o sistema ja responde
+# sozinho o que o tecnico ia perguntar de qualquer jeito: qual e o problema,
+# quais os sintomas e como corrigir.
+#
+# Roda uma vez so — depois `sessao.turnos` deixa de estar vazio e a condicao
+# nao volta a valer, mesmo com os reruns do Streamlit.
 if not sessao.turnos:
-    st.markdown(
-        f"""
-Pergunte o que fazer. Cada resposta cita **documento, secao e pagina**.
-
-Sugestoes para esta falha (`{sessao.familia}`):
-- *Como corrigir? Quais passos devo seguir?*
-- *Que ferramentas eu preciso?*
-- *Como sei que o conserto ficou bom?*
-- *E se eu nao tiver a ferramenta certa?* — para ver a recusa por falta de base
-"""
-    )
+    with st.spinner("Lendo o procedimento..."):
+        D.resumo_de_abertura(sessao, usar_llm=usar_llm, config_llm=cfg,
+                             k=k_trechos + 1)
+    st.rerun()
 
 for turno in sessao.turnos:
-    with st.chat_message("user"):
-        st.markdown(turno.pergunta)
+    # O turno de abertura nao teve pergunta do tecnico — desenhar um balao de
+    # usuario com a pergunta que o sistema fez a si mesmo seria mentira visual.
+    if not turno.abertura:
+        with st.chat_message("user"):
+            st.markdown(turno.pergunta)
 
     with st.chat_message("assistant"):
         # Recusa e degradacao entram como texto e legenda, nao como caixa
@@ -464,6 +500,15 @@ for turno in sessao.turnos:
             st.caption("**Fontes:** " + " · ".join(f"`{r}`" for r in turno.referencias))
 
             with st.expander("Ver o texto de cada fonte"):
+                # Mesma regua da tela de evidencia: cosseno de −1 a +1, com o
+                # minimo do G4 ao lado. Score 0,00 aparece quando os trechos
+                # vieram de `SELECT` por tipo de secao — ali nao houve
+                # semelhanca calculada, e inventar um numero seria mentir.
+                st.caption(
+                    f"Similaridade = cosseno da pergunta com o trecho, de −1 a "
+                    f"+1 · minimo do G4: **{D.SCORE_MINIMO_CHUNK:.2f}** · "
+                    f"0,000 = secao escolhida por tipo, sem calculo de semelhanca"
+                )
                 for t in turno.trechos:
                     pag = f"pagina {t.pagina}" if t.pagina else "pagina nao disponivel"
                     st.markdown(

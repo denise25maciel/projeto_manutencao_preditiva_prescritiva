@@ -190,11 +190,21 @@ LIMIAR_ESCOPO = 0.17
 MAX_TURNOS_NO_PROMPT = 4
 
 # --------------------------------------------------------------------------
-# Investigacao: quando a evidencia nao aponta um manual so
+# Escolha do manual: quando a evidencia nao aponta um so
 # --------------------------------------------------------------------------
+#
+# Os dois limiares abaixo decidem uma coisa so: **o sistema trava o manual
+# sozinho, ou mostra a lista e deixa o tecnico escolher?** Nao existe terceiro
+# desfecho — nao ha rodada de investigacao nem teto de tentativas.
+#
+# Isso muda o custo de errar para cada lado, e por isso os numeros podem ser
+# conservadores sem prejuizo: travar errado contamina a conversa inteira, ja que
+# o manual nao muda depois de fixado; mostrar a lista custa um clique a quem
+# esta na maquina e costuma reconhecer o defeito de imediato. Na duvida,
+# perguntar sai mais barato.
 
 # Margem relativa entre o 1o e o 2o documento: (p1 - p2) / p1. Abaixo disto a
-# sessao NAO trava — entra em investigacao e pede mais sintomas.
+# sessao NAO trava — a lista de candidatos vai para a tela.
 #
 # Medido com 10 descricoes, somando o peso por documento:
 #
@@ -232,13 +242,15 @@ MARGEM_MINIMA_DOCUMENTO = 0.25
 #
 # 0,45 fica no vao entre 39,7% e 49,1%. As duas condicoes valem juntas: passar
 # na margem e nao concentrar evidencia continua sendo motivo para perguntar.
+#
+# **Limitacao conhecida do share.** Sendo `p1/total`, ele depende de quantos
+# documentos aparecem no top-k: com 4 candidatos, dividir por igual da 25% e o
+# minimo de 45% exige quase metade de tudo; com 2 candidatos, 45% e quase de
+# graca. O limiar nao exige o mesmo esforco em situacoes diferentes. Com a lista
+# na tela isso deixou de ser grave — o efeito e mostrar candidatos a mais, nao
+# travar no manual errado —, mas continua sendo motivo para normalizar pelo
+# numero de candidatos numa proxima rodada.
 SHARE_MINIMO_DOCUMENTO = 0.45
-
-# Quantas vezes o sistema pede mais sintomas antes de desistir de decidir
-# sozinho. Esgotado o teto, ele mostra os candidatos com a evidencia e **o
-# tecnico escolhe** — pessoa escolhendo nao fere os guardrails; quem eles tiram
-# da decisao e o modelo.
-MAX_RODADAS_INVESTIGACAO = 2
 
 # --------------------------------------------------------------------------
 # Qualidade / outliers

@@ -20,12 +20,18 @@ Os atos 2, 3 e 4 moram em `_secao_dados_brutos.py`, `_secao_qualidade.py` e
 `_secao_falhas.py`. Sao os arquivos das antigas paginas, convertidos em
 `render()` — modulos fora de `pages/` nao viram item de menu.
 
-**O nome do arquivo e o rotulo do menu.** O Streamlit deriva o nome da pagina do
-nome do script (`source_util.page_icon_and_name`), trocando `_` por espaco;
-`set_page_config` nao muda isso. Por isso o entrypoint se chama
-`Analise_de_Dados.py` e nao `app.py`.
+**O nome do arquivo vira o rotulo do menu.** O Streamlit deriva o nome da pagina
+do nome do script (`source_util.page_icon_and_name`), trocando `_` por espaco, e
+`set_page_config` nao muda isso — ele so define o titulo da aba do navegador.
+Como o entrypoint se chama `app.py`, o primeiro item do menu lateral aparece
+como **"app"**, e nao como "Analise de Dados".
 
-Rodar com:  streamlit run ui/Analise_de_Dados.py
+E o preco de ter o nome convencional de entrypoint, que o README e a estrutura
+do projeto ja usavam. Para recuperar o rotulo sem renomear o arquivo, o caminho
+e migrar a navegacao para `st.navigation` / `st.Page`, onde o titulo de cada
+pagina e declarado no codigo em vez de deduzido do nome do arquivo.
+
+Rodar com:  streamlit run ui/app.py
 """
 
 from __future__ import annotations

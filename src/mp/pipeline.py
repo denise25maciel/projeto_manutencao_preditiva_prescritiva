@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from mp.guardrails import rules as g
 from mp.llm import prompts
 from mp.retrieval import rag
-from mp.retrieval.catalog import resolver
+from mp.retrieval.catalog import verificar_existencia_conserto
 
 # Quantas vezes tentar de novo quando o G5 reprova, antes de degradar.
 MAX_TENTATIVAS = 2
@@ -147,8 +147,7 @@ def responder(
     p.vereditos.append(v)
 
     # --- G2 e G3: catalogo, nao similaridade -------------------------------
-    catalogo = resolver(p.rotulo)
-    p.familia = catalogo["familia"]
+    p.familia = verificar_existencia_conserto(p.rotulo).familia
 
     v = g.g2_e_problema(p.rotulo)
     p.vereditos.append(v)
