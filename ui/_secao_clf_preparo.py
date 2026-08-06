@@ -7,8 +7,8 @@ por que a regra e essa e nao outra.
 O fio da aba e uma frase so: **uma leitura de sensor nao e um exemplo de
 defeito.** Uma linha do arquivo diz "a vibracao neste instante foi 3,2 mm/s", e
 isso nao caracteriza falha nenhuma — o que caracteriza e o comportamento de um
-trecho. Os cinco passos abaixo sao o caminho de "linha do arquivo" ate "exemplo
-que o modelo pode aprender".
+trecho. Os seis passos abaixo sao o caminho de "linha do arquivo" ate "duas
+bases prontas: a que treina o modelo e a que o cobra".
 
 Nao desenha modelo nem acuracia: isso e a outra aba.
 """
@@ -71,7 +71,7 @@ acelerando e numa com rolamento gasto. O que caracteriza e **como um trecho se
 comporta** — em que patamar ficou, o quanto oscilou, se estava subindo.
 
 Entao a leitura precisa virar trecho, e o trecho precisa virar numero. Sao
-cinco passos, nesta ordem.
+seis passos, nesta ordem.
         """
     )
 
@@ -412,6 +412,95 @@ nao respondem:
         hide_index=True,
     )
 
+    # ----------------------------------------------------------------------
+    # A transformacao, num caso concreto
+    # ----------------------------------------------------------------------
+    st.subheader("A transformacao, num caso concreto")
+
+    st.markdown(
+        f"""
+A tabela acima diz o que cada estatistica significa. Aqui ela **acontece**:
+escolha um evento e veja as {tamanho} leituras cruas de um lado e, do outro, os
+{len(ESTATISTICAS)} numeros que saem de cada coluna. Os dois quadros sao o mesmo
+trecho — o da esquerda tem {tamanho} linhas, o da direita tem {len(sem_regime)}.
+
+Os numeros da direita nao sao recalculados para a tela: saem de `resumir_bloco`,
+a mesma funcao que monta o conjunto de treino. E literalmente o que entra na
+floresta.
+        """
+    )
+
+    consultaveis = D.r_clf_eventos_consultaveis(tamanho)
+    c1, c2 = st.columns(2)
+    familia_demo = c1.selectbox(
+        "Familia", sorted(consultaveis["familia"].unique()), key="clf_demo_familia"
+    )
+    do_demo = consultaveis[consultaveis["familia"] == familia_demo]
+    evento_demo = c2.selectbox(
+        "Evento",
+        do_demo["evento"].tolist(),
+        format_func=lambda e: f"evento {e} — {int(do_demo.loc[do_demo['evento'] == e, 'n_leituras'].iloc[0])} leituras",
+        key="clf_demo_evento",
+    )
+
+    cruas = D.r_clf_leituras_do_evento(int(evento_demo), limite=tamanho)
+    estatisticas = D.r_clf_estatisticas(int(evento_demo), tamanho, False)
+
+    esq, meio, dir = st.columns([5, 1, 5])
+
+    with esq:
+        st.markdown(f"**ANTES — {len(cruas)} leituras cruas**")
+        st.caption(
+            f"Uma linha por leitura do sensor, a cada "
+            f"{config.INTERVALO_ESPERADO_S:.0f} s. Role para o lado."
+        )
+        st.dataframe(
+            cruas[sem_regime].round(4),
+            width="stretch",
+            hide_index=True,
+            height=300,
+        )
+        st.caption(f"`{len(cruas)} x {len(sem_regime)}` — nao cabe numa linha de matriz.")
+
+    with meio:
+        st.markdown("&nbsp;")
+        st.markdown("&nbsp;")
+        st.markdown(
+            "<div style='text-align:center;font-size:2.4rem;line-height:3rem'>→</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "<div style='text-align:center'>resumir_bloco</div>",
+            unsafe_allow_html=True,
+        )
+
+    with dir:
+        st.markdown(f"**DEPOIS — {len(sem_regime)} colunas x {len(ESTATISTICAS)} numeros**")
+        st.caption(
+            "Uma linha por coluna de medida. Achatada em sequencia, vira a linha "
+            "unica que o modelo recebe."
+        )
+        st.dataframe(
+            estatisticas.round(4).reset_index(),
+            width="stretch",
+            hide_index=True,
+            height=300,
+        )
+        st.caption(
+            f"`{len(sem_regime)} x {len(ESTATISTICAS)}` = **{n_features} numeros**, "
+            "numa linha so."
+        )
+
+    st.info(
+        f"""
+**O que se perde e o que se ganha.** As {tamanho} leituras viram
+{n_features} numeros: perde-se a leitura individual, e nao da para voltar atras.
+Ganha-se o que uma leitura sozinha nunca teve — **variacao, tendencia e
+extremo**, que e onde o defeito se manifesta. Uma vibracao de 3,2 mm/s nao
+distingue maquina nenhuma; 3,2 mm/s **subindo, com picos de 5,1**, distingue.
+        """
+    )
+
     st.markdown("**A matriz final, do jeito que o modelo a recebe**")
 
     nomes = D.r_clf_nomes_features(False)
@@ -444,6 +533,15 @@ nao respondem:
     st.divider()
 
     # ======================================================================
+    # PASSO 6 — as duas bases
+    # ======================================================================
+    st.header("Passo 6 — As duas bases: treino e teste", divider="gray")
+
+    _secao_bases(tamanho, n_features)
+
+    st.divider()
+
+    # ======================================================================
     # O caminho inteiro
     # ======================================================================
     st.header("O caminho inteiro, numa tabela", divider="gray")
@@ -471,6 +569,10 @@ nao respondem:
                  "o que e uma linha": "**uma janela inteira**",
                  "linhas": f"{len(amostras):,}".replace(",", "."),
                  "colunas": f"{n_features} + classe + grupo"},
+                {"etapa": "6 — Cortada em duas bases",
+                 "o que e uma linha": "a mesma janela, de um lado ou do outro",
+                 "linhas": "~80% treino / ~20% teste",
+                 "colunas": f"{n_features} + classe + grupo"},
             ]
         ),
         width="stretch",
@@ -480,7 +582,8 @@ nao respondem:
     st.caption(
         "Repare onde o significado de *linha* muda: ate a etapa 3 e uma leitura "
         "do sensor; na etapa 5 e uma janela inteira. E essa troca que faz o "
-        "problema virar aprendivel."
+        "problema virar aprendivel. A etapa 6 nao transforma nada — so reparte, "
+        "e o criterio da reparticao e o assunto da proxima aba."
     )
 
     st.info(
@@ -492,6 +595,171 @@ cada **decisao**: o rotulo agora vem do `fault_map.yaml` em vez de regras no
 codigo, o grupo vem do evento com `rpm` em vez da troca de rotulo, e as colunas
 vem da mesma funcao que o kNN usa. Sao tres pecas que este projeto ja tinha e
 que agora tem um consumidor a mais, em vez de um segundo dono.
+        """
+    )
+
+
+def _secao_bases(tamanho: int, n_features: int) -> None:
+    """As duas bases de pe: a que treina o modelo e a que o cobra.
+
+    A validacao cruzada faz este corte cinco vezes e descarta as tabelas — o que
+    e certo para medir e inutil para conferir. Aqui o corte e feito uma vez, e as
+    duas bases ficam visiveis e baixaveis.
+    """
+    st.markdown(
+        """
+A matriz do passo 5 e uma so. O modelo nao pode estudar nela inteira e depois
+ser cobrado nela inteira — seria dar a prova com o gabarito junto: ele tira nota
+alta sem ter aprendido nada, e ninguem descobre se sabe a materia.
+
+Entao ela e cortada em duas:
+
+- **Treino** — o que o modelo estuda, com a resposta a vista. **E esta a base
+  que da entrada no modelo.**
+- **Teste** — guardada no cofre. A resposta e escondida, o modelo palpita, e so
+  entao comparamos.
+        """
+    )
+
+    c1, c2 = st.columns([2, 3])
+    por_evento = c1.radio(
+        "Como cortar",
+        [True, False],
+        format_func=lambda v: (
+            "Sorteando eventos inteiros (correto)" if v
+            else "Sorteando amostras soltas (errado)"
+        ),
+        key="clf_base_corte",
+    )
+    fracao = c2.slider(
+        "Fatia que vai para o teste", 0.10, 0.40, 0.20, step=0.05,
+        format="%.0f%%", key="clf_base_fracao",
+    )
+
+    divisao = D.r_clf_divisao(tamanho, False, bool(por_evento), float(fracao))
+    treino, teste = divisao["treino"], divisao["teste"]
+
+    esq, dir = st.columns(2)
+
+    with esq:
+        st.markdown("#### TREINO — o que entra no modelo")
+        st.caption("O modelo estuda estas linhas, com a coluna `familia` a vista.")
+        st.dataframe(
+            treino.head(8).iloc[:, :6].round(4), width="stretch", hide_index=True
+        )
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Amostras", f"{len(treino):,}".replace(",", "."))
+        m2.metric("Eventos", divisao["eventos_treino"])
+        m3.metric("Familias", divisao["familias_treino"])
+        st.download_button(
+            "Baixar a base de treino (CSV)",
+            data=D.r_clf_csv_base("treino", tamanho, False, bool(por_evento)),
+            file_name=f"treino_janela_{tamanho}.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+
+    with dir:
+        st.markdown("#### TESTE — o que cobra o modelo")
+        st.caption("A coluna `familia` e escondida na hora de perguntar.")
+        st.dataframe(
+            teste.head(8).iloc[:, :6].round(4), width="stretch", hide_index=True
+        )
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Amostras", f"{len(teste):,}".replace(",", "."))
+        m2.metric("Eventos", divisao["eventos_teste"])
+        m3.metric("Familias", divisao["familias_teste"])
+        st.download_button(
+            "Baixar a base de teste (CSV)",
+            data=D.r_clf_csv_base("teste", tamanho, False, bool(por_evento)),
+            file_name=f"teste_janela_{tamanho}.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+
+    st.caption(
+        f"Mostrando 8 linhas e as 6 primeiras de {n_features + 2} colunas. "
+        f"Proporcao real: {100 * (1 - divisao['fracao_real']):.0f}% treino / "
+        f"{100 * divisao['fracao_real']:.0f}% teste. Cada linha e uma janela "
+        "resumida; `familia` e a resposta e `evento` e o grupo — nenhuma das "
+        "duas entra como feature."
+    )
+
+    # ----------------------------------------------------------------------
+    # A auditoria do proprio corte
+    # ----------------------------------------------------------------------
+    st.subheader("A pergunta que decide se a prova vale")
+
+    st.markdown(
+        "**Algum evento aparece dos dois lados ao mesmo tempo?** Se aparecer, o "
+        "modelo reencontra na prova uma medicao que estudou — e como janelas do "
+        "mesmo evento sao quase identicas (mesma bancada, mesma montagem, e "
+        "ainda metade do conteudo repetido pela sobreposicao), isso e cola."
+    )
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Eventos no treino", divisao["eventos_treino"])
+    m2.metric("Eventos no teste", divisao["eventos_teste"])
+    m3.metric("Eventos nos DOIS lados", divisao["eventos_vazados"])
+
+    if divisao["eventos_vazados"]:
+        st.error(
+            f"**{divisao['eventos_vazados']} dos {divisao['eventos_teste']} "
+            f"eventos do teste tambem estao no treino** — "
+            f"{100 * divisao['eventos_vazados'] / divisao['eventos_teste']:.0f}% "
+            "deles. A nota que sair daqui sai alta e nao significa nada. E o "
+            "corte que a aba 2 mede: 92% contra 44%."
+        )
+        if divisao["lista_vazados"]:
+            st.caption(
+                "Alguns dos eventos que vazaram: "
+                + ", ".join(str(e) for e in divisao["lista_vazados"])
+            )
+    else:
+        st.success(
+            "**Nenhum evento aparece nos dois lados.** Toda medicao testada e "
+            "uma que o modelo nunca viu. A nota que sair daqui e honesta — e a "
+            "resposta para a pergunta que importa: *vai funcionar numa maquina "
+            "nova?*"
+        )
+
+    # ----------------------------------------------------------------------
+    # O preco
+    # ----------------------------------------------------------------------
+    st.markdown("**O preco de cortar certo**")
+
+    problemas = []
+    if abs(divisao["fracao_real"] - divisao["fracao_pedida"]) > 0.01:
+        problemas.append(
+            f"O corte nao sai exatamente em {100 * divisao['fracao_pedida']:.0f}%: "
+            f"deu {100 * divisao['fracao_real']:.1f}%. Os eventos tem tamanhos "
+            "muito diferentes — 50 ou 1.000 leituras —, e sortea-los inteiros "
+            "faz a proporcao variar."
+        )
+    if divisao["familias_so_no_treino"]:
+        problemas.append(
+            "Familias que ficaram **so no treino** e nao serao avaliadas: "
+            f"`{'`, `'.join(divisao['familias_so_no_treino'])}`."
+        )
+    if divisao["familias_so_no_teste"]:
+        problemas.append(
+            "Familias que ficaram **so no teste**: "
+            f"`{'`, `'.join(divisao['familias_so_no_teste'])}`. O modelo sera "
+            "cobrado por um nome que nunca viu, e errara todas."
+        )
+
+    if problemas:
+        st.warning("\n\n".join(f"- {p}" for p in problemas))
+    else:
+        st.caption("Neste sorteio, as duas bases ficaram equilibradas.")
+
+    st.info(
+        """
+**Este corte serve para ver a base, nao para medir o modelo.** Um sorteio unico
+depende da sorte: outra semente da outro numero, e as familias que sobraram de
+um lado so mudam. Quem mede repete o corte 5 vezes e tira a media — e a
+validacao cruzada da aba 2, que tambem e onde as duas maneiras de cortar sao
+comparadas de verdade.
         """
     )
 

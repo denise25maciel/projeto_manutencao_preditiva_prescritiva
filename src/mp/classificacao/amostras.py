@@ -69,6 +69,8 @@ __all__ = [
     "resumir_bloco",
     "criar_amostras",
     "cobertura_dos_eventos",
+    "matriz_legivel",
+    "tabela_de_estatisticas",
 ]
 
 
@@ -193,6 +195,51 @@ def resumir_bloco(bloco: pd.DataFrame | np.ndarray, colunas: list[str] | None = 
     # que `nomes_das_features` promete: as 5 estatisticas da coluna 0, depois as
     # 5 da coluna 1, e assim por diante.
     return estatisticas.T.ravel()
+
+
+def tabela_de_estatisticas(
+    bloco: pd.DataFrame, colunas: list[str] | None = None
+) -> pd.DataFrame:
+    """O vetor de features de um bloco, remontado como coluna x estatistica.
+
+    `resumir_bloco` devolve os numeros achatados numa linha so, que e o formato
+    que o modelo consome e o pior formato possivel para alguem ler. Aqui os
+    mesmos numeros voltam a ter duas dimensoes: uma linha por coluna de medida,
+    uma coluna por estatistica.
+
+    E deliberadamente uma **remontagem**, e nao um segundo calculo: se esta
+    funcao recalculasse as estatisticas por conta propria, a tela poderia
+    mostrar um numero e o modelo receber outro, e ninguem notaria. O que aparece
+    aqui e literalmente o que entra na floresta.
+    """
+    colunas = colunas or colunas_de_entrada(bloco)
+    vetor = resumir_bloco(bloco, colunas)
+    return pd.DataFrame(
+        vetor.reshape(len(colunas), len(ESTATISTICAS)),
+        index=pd.Index(colunas, name="coluna"),
+        columns=list(ESTATISTICAS),
+    )
+
+
+def matriz_legivel(amostras: pd.DataFrame, nomes: list[str] | None = None) -> pd.DataFrame:
+    """As amostras como uma tabela plana: `familia`, `evento` e uma coluna por feature.
+
+    E o formato em que a base pode ser olhada, baixada e conferida — a coluna
+    `features` que `criar_amostras` devolve guarda um array por linha, que serve
+    ao `sklearn` e nao serve a ninguem mais.
+    """
+    if amostras.empty:
+        return pd.DataFrame()
+
+    nomes = nomes or amostras.attrs.get("nomes_features")
+    X = np.vstack(amostras["features"].to_list())
+    if not nomes or len(nomes) != X.shape[1]:
+        nomes = [f"f{i}" for i in range(X.shape[1])]
+
+    tabela = pd.DataFrame(X, columns=nomes)
+    tabela.insert(0, COLUNA_CLASSE, amostras[COLUNA_CLASSE].to_numpy())
+    tabela.insert(1, COLUNA_GRUPO, amostras[COLUNA_GRUPO].to_numpy())
+    return tabela
 
 
 def criar_amostras(

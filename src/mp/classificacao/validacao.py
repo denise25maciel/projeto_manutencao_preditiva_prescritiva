@@ -32,13 +32,19 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
-from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
+from sklearn.model_selection import (
+    GroupShuffleSplit,
+    StratifiedGroupKFold,
+    StratifiedKFold,
+    train_test_split,
+)
 
 from mp import config
 from mp.classificacao import amostras as A
 
 __all__ = [
     "ESTRATEGIAS",
+    "dividir_treino_teste",
     "validar",
     "matriz_de_confusao",
     "acerto_por_familia",
@@ -168,6 +174,75 @@ def validar(
         "linha_de_base": linha_de_base(y),
         # A distancia entre as duas notas. E o numero que resume o achado.
         "inflacao": float(inflacao),
+    }
+
+
+def dividir_treino_teste(
+    amostras: pd.DataFrame,
+    fracao_teste: float = 0.2,
+    por_evento: bool = True,
+    semente: int | None = None,
+) -> dict:
+    """Um corte unico em treino e teste, para a base poder ser vista e baixada.
+
+    A validacao cruzada faz este corte cinco vezes e joga fora as tabelas
+    intermediarias — o que e certo para medir e inutil para conferir. Aqui o
+    corte e feito uma vez e as duas bases ficam de pe, com a mesma regra:
+    `por_evento=True` sorteia **eventos inteiros**, e nao janelas soltas.
+
+    Devolve tambem `eventos_vazados`, que e a auditoria do proprio corte. Com
+    `por_evento=True` ele tem de ser zero; com `False`, ele mostra o tamanho do
+    problema que a estrategia aleatoria cria. O numero e contado, nao assumido.
+
+    **Nao e daqui que sai a acuracia.** Um corte unico depende do sorteio: uma
+    semente diferente da outro numero. Quem mede e `validar`, que repete e tira
+    a media. Esta funcao existe para mostrar a base, nao para avalia-la.
+    """
+    semente = config.CLF_SEMENTE if semente is None else semente
+    X, y, grupos = A.matriz(amostras)
+
+    if por_evento:
+        divisor = GroupShuffleSplit(
+            n_splits=1, test_size=fracao_teste, random_state=semente
+        )
+        idx_treino, idx_teste = next(divisor.split(X, y, groups=grupos))
+    else:
+        # `stratify=y` mantem a proporcao das familias nos dois lados; sem isso
+        # a comparacao entre as duas estrategias misturaria dois efeitos.
+        idx_treino, idx_teste = train_test_split(
+            np.arange(len(y)), test_size=fracao_teste,
+            random_state=semente, stratify=y,
+        )
+
+    tabela = A.matriz_legivel(amostras)
+    treino = tabela.iloc[idx_treino].reset_index(drop=True)
+    teste = tabela.iloc[idx_teste].reset_index(drop=True)
+
+    eventos_treino = set(grupos[idx_treino].tolist())
+    eventos_teste = set(grupos[idx_teste].tolist())
+    vazados = sorted(eventos_treino & eventos_teste)
+
+    return {
+        "treino": treino,
+        "teste": teste,
+        "por_evento": por_evento,
+        "fracao_pedida": fracao_teste,
+        "fracao_real": len(teste) / len(tabela),
+        "eventos_treino": len(eventos_treino),
+        "eventos_teste": len(eventos_teste),
+        "eventos_vazados": len(vazados),
+        "lista_vazados": vazados[:20],
+        "familias_treino": int(treino[A.COLUNA_CLASSE].nunique()),
+        "familias_teste": int(teste[A.COLUNA_CLASSE].nunique()),
+        # Familia que existe no treino e nao no teste nao pode ser avaliada; o
+        # contrario e pior, porque o modelo sera cobrado por um nome que nunca
+        # viu. Sortear eventos inteiros torna os dois casos possiveis.
+        "familias_so_no_treino": sorted(
+            set(treino[A.COLUNA_CLASSE]) - set(teste[A.COLUNA_CLASSE])
+        ),
+        "familias_so_no_teste": sorted(
+            set(teste[A.COLUNA_CLASSE]) - set(treino[A.COLUNA_CLASSE])
+        ),
     }
 
 

@@ -830,6 +830,48 @@ def r_clf_csv(tamanho: int | None = None, incluir_regime: bool = False) -> str:
     return tabela.to_csv(index=False)
 
 
+@st.cache_data(**CACHE)
+def r_clf_divisao(tamanho: int | None = None, incluir_regime: bool = False,
+                  por_evento: bool = True, fracao_teste: float = 0.2):
+    """Um corte unico em treino e teste, com as duas bases de pe."""
+    from mp.classificacao import dividir_treino_teste
+
+    return dividir_treino_teste(
+        r_clf_amostras("janela", tamanho, incluir_regime),
+        fracao_teste=fracao_teste, por_evento=por_evento,
+    )
+
+
+@st.cache_data(**CACHE)
+def r_clf_leituras_do_evento(evento: int, limite: int | None = None):
+    """As leituras cruas de um evento — o lado esquerdo da transformacao."""
+    leituras = r_clf_leituras()
+    bloco = leituras[leituras["evento"] == evento]
+    return bloco.head(limite) if limite else bloco
+
+
+@st.cache_data(**CACHE)
+def r_clf_estatisticas(evento: int, tamanho: int | None = None,
+                       incluir_regime: bool = False):
+    """As 5 estatisticas por coluna da primeira janela de um evento.
+
+    O lado direito da transformacao. Sai de `resumir_bloco`, a mesma funcao que
+    monta o conjunto de treino — nao e um calculo de vitrine.
+    """
+    from mp.classificacao import tabela_de_estatisticas
+
+    tam = tamanho or config.CLF_JANELA_TAMANHO
+    bloco = r_clf_leituras_do_evento(evento, limite=tam)
+    return tabela_de_estatisticas(bloco, r_clf_colunas(incluir_regime))
+
+
+@st.cache_data(**CACHE)
+def r_clf_csv_base(qual: str, tamanho: int | None = None,
+                   incluir_regime: bool = False, por_evento: bool = True) -> str:
+    """Treino ou teste em CSV, para o botao de baixar."""
+    return r_clf_divisao(tamanho, incluir_regime, por_evento)[qual].to_csv(index=False)
+
+
 @st.cache_data(show_spinner="Treinando e validando 10 florestas...")
 def r_clf_validacao(modo: str = "janela", tamanho: int | None = None,
                     incluir_regime: bool = False):

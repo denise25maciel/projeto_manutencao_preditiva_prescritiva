@@ -579,25 +579,3 @@ entre a linha da troca e a anterior:
     "posicao original — com filtro ligado, ela pula."
     )
     st.dataframe(linhas, width="stretch")
-
-    with st.expander("Por que uma tela so para o dado cru"):
-        st.markdown(
-            """
-Porque toda decisao seguinte depende de uma escolha feita aqui, e essa escolha
-precisa ficar visivel.
-
-O arquivo **nao esta em ordem de data**. Toda tela deste projeto ordena antes de
-calcular — e uma correcao silenciosa, e correcao silenciosa e o tipo de coisa que
-ninguem revisa. Esta pagina mostra o que seria olhar o dado sem ela.
-
-Tres coisas so aparecem aqui:
-
-1. **A emenda entre gravacoes.** No grafico, um degrau no meio de uma serie que
-   parecia continua. Ele nao e defeito: e o fim de um ensaio e o comeco de outro.
-2. **O rotulo mudando no meio da coleta.** A faixa colorida embaixo mostra onde.
-   E dessa troca que a Parte 1 monta os eventos.
-3. **Leituras repetidas.** Trechos em que a linha do grafico fica horizontal e
-   perfeitamente reta — sao as 9.736 linhas identicas a anterior (pendencia P2,
-   descrita na tela de Qualidade dos Dados). Elas continuam no arquivo.
-"""
-        )

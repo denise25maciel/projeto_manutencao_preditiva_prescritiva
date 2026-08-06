@@ -165,7 +165,7 @@ Em três abas:
 
 | Aba | O que faz |
 |---|---|
-| **Preparação dos dados** | Como uma leitura vira um exemplo: o rótulo resolvido pelo `fault_map.yaml`, o agrupamento em eventos, as colunas escolhidas, o recorte em janelas de 50 leituras e o resumo de cada janela em 80 números |
+| **Preparação dos dados** | Como uma leitura vira um exemplo, em 6 passos: o rótulo resolvido pelo `fault_map.yaml`, o agrupamento em eventos, as colunas escolhidas, o recorte em janelas de 50 leituras, a transformação de cada janela em 80 números — mostrada lado a lado, as 50 leituras cruas contra as estatísticas que saem delas — e o corte nas **duas bases**, treino e teste, ambas visíveis e baixáveis |
 | **O modelo e o que ele vale** | A floresta de 400 árvores, as duas maneiras de cortar treino e teste, onde o modelo erra, um evento segurado fora do treino para experimentar, e os dois experimentos de configuração |
 | **Executar e ver o resultado** | O pipeline rodando de verdade: as 5 etapas em ordem, cada uma cronometrada e mostrando o que produziu, e no fim o laudo dos testes — métricas, folds, matriz de confusão e relatório para baixar |
 
