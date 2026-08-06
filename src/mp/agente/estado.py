@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from mp.llm.client import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
 
 @dataclass
 class Turno:
@@ -106,6 +108,9 @@ class Sessao:
     # texto so tiraria a media dos sintomas e diluiria justamente o que
     # discrimina. Ver `rag.buscar_por_sintomas`.
     sintomas: list[str] = field(default_factory=list)
+    # O que a separacao da fala fez, em portugues, para a tela. Vazio quando
+    # nenhum modelo participou — ai a descricao entrou inteira, como um sintoma.
+    nota_sintomas: str = ""
     candidatos: list[tuple[str, float]] = field(default_factory=list)
     # `Doc2` nao diz nada a quem esta na maquina; `desalinhamento` diz. O mapa
     # e montado no grafo, que e quem tem acesso ao catalogo — o estado nao
@@ -235,13 +240,39 @@ class Sessao:
                 return nome
         return self.manual
 
-    def historico_para_prompt(self, maximo: int = 4) -> list[tuple[str, str]]:
-        """Os ultimos turnos como `(pergunta, texto_verificado)`.
+    def historico_para_prompt(self, maximo: int = 4) -> list[BaseMessage]:
+        """Os ultimos turnos como mensagens — a conversa, nao um resumo dela.
 
-        So entram turnos que produziram conteudo — recusa nao vira contexto.
+        So entram turnos que produziram conteudo: recusa nao vira contexto.
+
+        **Por que nem toda volta vira `AIMessage`.** A regra 2 do topo deste
+        arquivo diz que o historico guarda so o verificado; quando a resposta
+        reprova no G5, o que sobrevive e o trecho do manual. Esse trecho e texto
+        do procedimento, e o modelo nunca o escreveu. Poe-lo num `AIMessage`
+        seria dizer "voce disse isto" sobre algo que ele nao disse — e o modelo
+        trata a propria fala anterior como compromisso assumido, o que faz um
+        deslize do turno 2 virar premissa no turno 3.
+
+        Por isso a volta degradada entra como `SystemMessage`, dizendo de quem e
+        o texto. Mesmo conteudo, autoria certa.
         """
-        uteis = [t for t in self.turnos if not t.recusado]
-        return [(t.pergunta, t.texto_para_historico) for t in uteis[-maximo:]]
+        mensagens: list[BaseMessage] = []
+        for t in [t for t in self.turnos if not t.recusado][-maximo:]:
+            mensagens.append(HumanMessage(content=t.pergunta))
+            if t.verificada and not t.degradou:
+                mensagens.append(AIMessage(content=t.resposta))
+            else:
+                mensagens.append(
+                    SystemMessage(
+                        content=(
+                            "Trecho do manual referente a pergunta acima. Nao e "
+                            "fala sua: a redacao anterior foi reprovada na "
+                            "conferencia de citacoes e substituida pela fonte.\n\n"
+                            + t.texto_para_historico
+                        )
+                    )
+                )
+        return mensagens
 
     @property
     def n_verificados(self) -> int:

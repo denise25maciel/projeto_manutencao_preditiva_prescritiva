@@ -76,9 +76,22 @@ pip install -r requirements.txt
 
 O `requirements.txt` cobre o que a Parte 0 precisa: pandas, numpy, pyarrow,
 streamlit, altair, pyyaml — mais jupyterlab e matplotlib para os notebooks.
-As bibliotecas das partes seguintes (SQLAlchemy, scikit-learn, FastAPI, Ollama)
-estão listadas em comentário no fim do arquivo e mapeadas como extras no
-`pyproject.toml`; entram quando cada parte for implementada.
+As bibliotecas das partes seguintes (scikit-learn, FastAPI) estão listadas em
+comentário no fim do arquivo e mapeadas como extras no `pyproject.toml`; entram
+quando cada parte for implementada.
+
+**Modelo de linguagem (Parte 5).** O `langchain-core` já está na lista, mas ele
+não fala com provedor nenhum — traz só as mensagens tipadas e a saída
+estruturada. O adaptador do provedor é um pacote separado, e você instala apenas
+o que for usar:
+
+```bash
+pip install langchain-ollama      # a meta: roda local, sem chave
+pip install langchain-openai      # para desenvolver, exige OPENAI_API_KEY no .env
+```
+
+Sem nenhum deles o sistema continua funcionando: a conversa devolve o texto cru
+do manual, e é assim que se comprova que o conteúdo não vem do modelo.
 
 > O import de `src/mp/` funciona sem instalar o pacote — `ui/_dados.py` e o
 > notebook resolvem o caminho sozinhos. Se preferir o pacote instalado, use
@@ -117,17 +130,37 @@ Com o venv ativo, a partir da **raiz do projeto**:
 streamlit run ui/app.py
 ```
 
-Abre em `http://localhost:8501`. Três telas no menu lateral:
+Abre em `http://localhost:8501`. A **página inicial é uma sequência única**, em
+seis atos — separada em telas, cada uma responderia um pedaço e caberia a quem
+lesse costurar a ordem, e a ordem é justamente o argumento:
 
-| Tela | O que mostra |
+| Ato | O que responde |
 |---|---|
-| **Visão geral** | Números de cabeçalho e os três achados que contrariam a suposição inicial |
-| **Análise de Falhas** | Valores únicos de `fault` com busca e filtro. Ao selecionar um rótulo: assinatura de vibração com quartis e CV, o que o distingue do resto do dataset, distribuição de cada feature, **série temporal por coluna** e outliers dentro da classe |
-| **Qualidade dos Dados** | Como o dado chegou: nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
-| **Documentos** | Os 6 procedimentos convertidos em Markdown: títulos, campos de cada artigo, matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
-| **Eventos** | As 166.796 linhas agrupadas em ocorrências contáveis, com as 5 validações do agrupamento e o custo da regra escolhida |
+| **1. O que chegou** | Números de cabeçalho e os três achados que contrariam a suposição inicial |
+| **2. O arquivo cru** | A série sem ordenar, agrupar nem reamostrar — o único ato que não corrige nada |
+| **3. Dá para confiar?** | Nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
+| **4. O que os dados dizem** | Assinatura de vibração por rótulo com quartis e CV, o que distingue cada falha, série temporal por coluna e outliers dentro da classe |
+| **5. Quantas vezes aconteceu** | As 166.796 linhas agrupadas em ocorrências contáveis, com as 5 validações do agrupamento e o custo da regra escolhida |
+| **6. O que fazer a respeito** | Os 6 procedimentos convertidos em Markdown, a matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
 
-Na primeira visita à tela **Documentos**, clique em **Converter PDFs** para gerar os
+A ordem carrega o argumento: o ato 2 mostra o arquivo antes de qualquer correção,
+e o ato 3 vem antes do 4 porque ler a assinatura de uma falha sem saber que o
+arquivo tem leituras repetidas é ler número sem saber a margem dele. Os atos 5 e
+6 preparam as **duas fontes** que o sistema cruza — e elas só se encontram pela
+coluna `fault`, nunca por semelhança entre número e texto.
+
+No menu lateral ficam as duas telas que **usam** isso:
+
+| Tela | O que faz |
+|---|---|
+| **Modelo de Linguagem** | Escolha do provedor (local ou API), as regras do prompt e o teste de conexão |
+| **Diagnóstico** | O fluxo completo: o técnico descreve o problema ou chega o JSON do sensor, o sistema acha o procedimento e conversa sobre ele, citando documento, seção e página |
+
+Cada ato mora num `ui/_secao_*.py` com uma função `render()`. Módulos fora de
+`ui/pages/` não viram item de menu — é assim que a sequência fica única sem
+duplicar código.
+
+Na primeira visita, no **ato 6**, clique em **Converter PDFs** para gerar os
 `.md` a partir de `data/raw/*.pdf`. Eles são escritos em
 `data/processed/documentos_md/`, fora do git.
 
@@ -203,9 +236,10 @@ reimplementam nada. Nada em produção depende deles.
 │   ├── ingestion/            # TRANSFORMA: sensors (eventos), documents (PDF->MD)
 │   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
-│   ├── app.py                # entrypoint: streamlit run ui/app.py
+│   ├── app.py                # entrypoint e narrativa única: streamlit run ui/app.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
-│   └── pages/
+│   ├── _secao_*.py           # os atos da narrativa, cada um com render()
+│   └── pages/                # só o que é tela de verdade: modelo e diagnóstico
 ├── requirements.txt          # instalação do ambiente
 └── pyproject.toml            # metadados + extras das partes seguintes
 ```

@@ -1,24 +1,29 @@
-"""A analise dos dados, contada como uma historia so — Parte 0.
+"""Do arquivo bruto aos procedimentos, contado como uma historia so.
 
-Antes eram quatro telas separadas no menu: a visao geral, os Dados Brutos, a
-Qualidade dos Dados e a Analise de Falhas. Separadas, cada uma respondia um
-pedaco e cabia a quem lesse costurar a ordem — e a ordem e justamente o
-argumento. Aqui elas viram quatro atos de uma sequencia unica:
+Antes eram varias telas separadas no menu, cada uma respondendo um pedaco e
+cabendo a quem lesse costurar a ordem — e a ordem e justamente o argumento. Aqui
+elas viram atos de uma sequencia unica:
 
     ato 1   o que chegou          quanto dado, de quando, com que rotulos
     ato 2   o arquivo cru         a serie sem ordenar, agrupar nem reamostrar
     ato 3   da para confiar?      o que veio torto, e quanto disso pesa
     ato 4   o que os dados dizem  o comportamento medido de cada falha
+    ato 5   de leitura a evento   as linhas viram ocorrencias contaveis
+    ato 6   os procedimentos      a outra fonte: os 6 manuais da empresa
 
 A ordem carrega o argumento. O ato 2 mostra o arquivo **antes** de qualquer
-correcao — e a unica tela que nao ordena por data —, e por isso vem antes do
-levantamento de qualidade: primeiro se ve o problema, depois se mede. E o ato 3
+correcao — e a unica secao que nao ordena por data —, e por isso vem antes do
+levantamento de qualidade: primeiro se ve o problema, depois se mede. O ato 3
 vem antes do 4 porque ler a assinatura de uma falha sem saber que o arquivo tem
 leituras repetidas e horarios errados e ler numero sem saber a margem dele.
 
-Os atos 2, 3 e 4 moram em `_secao_dados_brutos.py`, `_secao_qualidade.py` e
-`_secao_falhas.py`. Sao os arquivos das antigas paginas, convertidos em
-`render()` — modulos fora de `pages/` nao viram item de menu.
+E os atos 5 e 6 fecham a preparacao das **duas fontes** que o resto do sistema
+cruza: o ato 5 transforma linhas em ocorrencias contaveis, e o ato 6 traz os
+manuais. Os dois so se encontram pela coluna `fault`, via `fault_map.yaml` —
+numero nunca e comparado com texto.
+
+Cada ato mora num `_secao_*.py`. Sao os arquivos das antigas paginas,
+convertidos em `render()` — modulos fora de `pages/` nao viram item de menu.
 
 **O nome do arquivo vira o rotulo do menu.** O Streamlit deriva o nome da pagina
 do nome do script (`source_util.page_icon_and_name`), trocando `_` por espaco, e
@@ -41,13 +46,15 @@ import streamlit as st
 
 import _dados as D
 import _secao_dados_brutos
+import _secao_documentos
+import _secao_eventos
 import _secao_falhas
 import _secao_qualidade
 
 D.configurar_pagina("Analise de Dados")
 
-st.title("🔧 Manutencao Prescritiva — A analise dos dados")
-st.caption("Entender o dado antes de mudar qualquer coisa.")
+st.title("🔧 Manutencao Prescritiva — Dos dados aos procedimentos")
+st.caption("Entender as duas fontes antes de cruzar qualquer coisa.")
 
 try:
     resumo = D.r_resumo()
@@ -80,22 +87,28 @@ st.markdown(
 Esta e a etapa de **exploracao**. Aqui nada e corrigido, filtrado ou apagado:
 so descrevemos o que veio no arquivo. Limpar os dados vem depois, na proxima etapa.
 
-A tela e longa de proposito — e uma sequencia, nao um painel. Quatro perguntas,
+A tela e longa de proposito — e uma sequencia, nao um painel. Seis perguntas,
 nesta ordem:
 """
 )
 
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3 = st.columns(3)
 c1.info("**Ato 1 — O que chegou?**\n\nQuanto dado, de quando, com que rotulos.")
 c2.info("**Ato 2 — Como e o arquivo cru?**\n\nA serie sem nenhum tratamento.")
 c3.info("**Ato 3 — Da para confiar?**\n\nO que veio torto, e quanto disso pesa.")
+
+c4, c5, c6 = st.columns(3)
 c4.info("**Ato 4 — O que os dados dizem?**\n\nO comportamento medido de cada falha.")
+c5.info("**Ato 5 — Quantas vezes aconteceu?**\n\nLeituras seguidas viram um evento.")
+c6.info("**Ato 6 — O que fazer a respeito?**\n\nOs 6 manuais e o que cada um cobre.")
 
 st.caption(
     "A ordem carrega o argumento: o ato 2 mostra o arquivo antes de qualquer "
     "correcao, e o ato 3 vem antes do 4 porque ler a assinatura de uma falha sem "
     "saber que o arquivo tem leituras repetidas e horarios errados e ler numero "
-    "sem saber a margem dele."
+    "sem saber a margem dele. Os atos 5 e 6 preparam as **duas fontes** que o "
+    "sistema cruza — e elas so se encontram pela coluna `fault`, nunca por "
+    "semelhanca entre numero e texto."
 )
 
 st.divider()
@@ -278,19 +291,67 @@ _secao_falhas.render()
 st.divider()
 
 # ==========================================================================
+# ATO 5 — De leitura para evento
+# ==========================================================================
+st.header("Ato 5 — Quantas vezes isso aconteceu", divider="gray")
+
+st.markdown(
+    """
+Ate aqui a unidade foi a **linha do arquivo**. Ela nao responde a pergunta que o
+tecnico faz: `rolamento_inner` tem 13 mil linhas, e isso nao sao 13 mil falhas —
+sao 34 horas medindo a mesma. Contar linha por ocorrencia daria "4.200 vezes"
+para uma unica sessao de bancada.
+
+Um **evento** e uma vez em que a maquina foi medida com o mesmo defeito, na mesma
+rotacao. Ha duas ordens possiveis para monta-los, e elas nao dao o mesmo
+resultado — entao rodam lado a lado, sobre o mesmo arquivo.
+"""
+)
+
+_secao_eventos.render()
+
+st.divider()
+
+# ==========================================================================
+# ATO 6 — Os procedimentos
+# ==========================================================================
+st.header("Ato 6 — O que fazer a respeito", divider="gray")
+
+st.markdown(
+    """
+Os cinco atos anteriores trataram de **uma** fonte: o que o sensor mediu. Ela
+diz o que esta acontecendo e nunca diz o que fazer.
+
+A segunda fonte sao os 6 manuais da empresa. Eles chegam em PDF, viram texto com
+as secoes numeradas preservadas, e e dai que sai a citacao — nao basta responder
+"alinhe o motor", tem de ser *"conforme o Doc2, secao 9"*.
+
+**As duas fontes nunca se comparam diretamente.** Numero nao e comparado com
+texto: o evento resolve para um rotulo, o rotulo resolve para uma familia, e a
+familia aponta o documento pelo `fault_map.yaml`, que e curado a mao e
+versionado. E por isso que uma falha sem manual e recusada por um `SELECT`, e
+nao por uma busca que sempre acharia "o trecho menos diferente".
+"""
+)
+
+_secao_documentos.render()
+
+st.divider()
+
+# ==========================================================================
 # Fecho
 # ==========================================================================
 st.header("Depois desta historia", divider="gray")
 
 st.markdown(
     """
-Os quatro atos acima respondem *o que veio e o que ele diz*. As telas do menu a
-esquerda seguem dali:
+Os seis atos acima prepararam as duas fontes: o que a maquina mediu e o que os
+manuais mandam fazer. As telas do menu a esquerda usam isso:
 
-- **Documentos** — os 6 manuais de procedimento e quais falhas cada um cobre
-- **Eventos** — leituras seguidas do mesmo defeito agrupadas em ocorrencias
-- **Modelo de Linguagem** — escolha do provedor (local ou API) e teste de conexao
-- **Diagnostico** — o fluxo completo: chega o JSON do sensor, o sistema diz qual e
-  a falha e conversa sobre o procedimento, citando documento, secao e pagina
+- **Modelo de Linguagem** — escolha do provedor (local ou API), as regras do
+  prompt e o teste de conexao
+- **Diagnostico** — o fluxo completo: o tecnico descreve o problema ou chega o
+  JSON do sensor, o sistema acha o procedimento e conversa sobre ele, citando
+  documento, secao e pagina
 """
 )

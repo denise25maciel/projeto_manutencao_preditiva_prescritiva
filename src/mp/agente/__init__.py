@@ -13,6 +13,7 @@ from mp.agente.grafo import (
     no_escopo,
     responder,
     resumo_inicial,
+    separar_sintomas,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "responder",
     "resumo_inicial",
     "no_escopo",
+    "separar_sintomas",
 ]

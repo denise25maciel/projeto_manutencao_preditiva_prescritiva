@@ -16,7 +16,7 @@ para tornar a desobediencia rara, nao impossivel.
 
 from __future__ import annotations
 
-from mp.llm.client import Mensagem
+from mp.llm.client import BaseMessage, HumanMessage, SystemMessage, como_texto
 
 SISTEMA = """Voce redige respostas de manutencao industrial para um tecnico em campo.
 
@@ -58,25 +58,6 @@ def bloco_de_trechos(trechos) -> str:
             f"--- {t.documento_id}, secao {t.numero}: {t.titulo}{campo}\n{t.texto.strip()}"
         )
     return "\n\n".join(partes)
-
-
-def bloco_de_historico(historico) -> str:
-    """As voltas anteriores da conversa, so com o que foi verificado.
-
-    O que chega aqui ja passou pelo filtro do `Turno.texto_para_historico`:
-    resposta reprovada no G5 nao entra: no lugar dela vem o trecho do manual.
-    """
-    if not historico:
-        return ""
-
-    partes = []
-    for pergunta, resposta in historico:
-        partes.append(f"Tecnico: {pergunta}\nVoce respondeu: {resposta}")
-    return (
-        "CONVERSA ATE AQUI (so o que foi verificado; use para entender o contexto "
-        "da pergunta nova, nunca como fonte de fato tecnico):\n\n"
-        + "\n\n".join(partes)
-    )
 
 
 def bloco_de_fatos(fatos: dict | None) -> str:
@@ -127,23 +108,34 @@ def montar(
     familia: str | None,
     trechos,
     fatos: dict | None = None,
-    historico=None,
+    historico: list[BaseMessage] | None = None,
     familias=None,
-) -> list[Mensagem]:
+    sistema: str | None = None,
+) -> list[BaseMessage]:
     """Monta as mensagens da resposta prescritiva.
 
-    `historico` e a lista `(pergunta, resposta_verificada)` das voltas
-    anteriores. Ele entra como **contexto da conversa**, nunca como fonte: o
-    prompt diz isso explicitamente, e a regra 1 do sistema continua valendo —
-    so os trechos autorizam uma afirmacao tecnica.
+    A forma da lista:
+
+        SystemMessage   as regras
+        (historico)     HumanMessage / AIMessage alternados das voltas anteriores
+        HumanMessage    assunto + fatos + trechos + a pergunta desta volta
+
+    `historico` ja vem como **mensagens**, montado por
+    `Sessao.historico_para_prompt`. Antes era um paragrafo dentro da mensagem do
+    usuario, descrevendo a conversa; agora e a conversa. Nao muda o que o modelo
+    pode afirmar — o historico continua sendo contexto, nunca fonte, e a regra 1
+    do sistema continua valendo.
+
+    `sistema` substitui as regras padrao. Existe para a tela poder edita-las **e
+    mostrar que isso nao afrouxa nada**: apagar a regra da citacao nao faz o G5
+    aceitar resposta sem fonte, porque o G5 e codigo. Guardrail que um campo de
+    texto desliga nao era guardrail.
 
     `familia` vazia com `familias` preenchida e a sessao que travou o manual sem
     ter apurado o tipo — ver `bloco_de_assunto`.
     """
     blocos = [bloco_de_assunto(familia, familias)]
 
-    if texto := bloco_de_historico(historico):
-        blocos.append(texto)
     if texto := bloco_de_fatos(fatos):
         blocos.append(texto)
 
@@ -153,13 +145,19 @@ def montar(
     )
     blocos.append(f"PERGUNTA DO TECNICO:\n{pergunta.strip()}")
 
-    return [Mensagem("system", SISTEMA), Mensagem("user", "\n\n".join(blocos))]
+    return [
+        SystemMessage(content=sistema if sistema is not None else SISTEMA),
+        *(historico or []),
+        HumanMessage(content="\n\n".join(blocos)),
+    ]
 
 
-def texto_enviado(mensagens: list[Mensagem]) -> str:
+def texto_enviado(mensagens: list[BaseMessage]) -> str:
     """As mensagens como um texto so — para mostrar na tela o que de fato foi enviado.
 
     Existe para auditoria: a tela precisa poder provar que o modelo nao recebeu
-    nada alem disso.
+    nada alem disso. O rotulo de cada bloco (`[SYSTEM]`, `[HUMAN]`, `[AI]`) e o
+    tipo real da mensagem, entao a tela mostra tambem **como** o historico foi
+    enviado, nao so o que.
     """
-    return "\n\n".join(f"[{m.papel.upper()}]\n{m.conteudo}" for m in mensagens)
+    return como_texto(mensagens)

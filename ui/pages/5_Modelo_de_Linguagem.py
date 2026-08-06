@@ -85,9 +85,52 @@ with c4:
         help="Em tokens — mais ou menos tres quartos disso em palavras.",
     )
 
+st.divider()
+
+# ==========================================================================
+# 2b. As regras do prompt
+# ==========================================================================
+st.subheader("Regras do prompt")
+
+st.markdown(
+    """
+Este texto vai como **`SystemMessage`** em toda resposta prescritiva. Ele e o que
+tenta impedir o modelo de acrescentar o que sabe de fabrica.
+
+**E editavel de proposito.** Apague a regra 2 — a que exige citar a fonte —, va
+para a tela de Diagnostico e faca uma pergunta: o modelo vai responder sem citar,
+e o **G5 reprova assim mesmo**. Guardrail que um campo de texto desliga nunca foi
+guardrail; o que segura e codigo, e voce pode conferir isso em um minuto.
+"""
+)
+
+# O valor mora na sessao, nao no widget: e o botao de restaurar que escreve nele
+# antes do `text_area` existir de novo. Passar `value=` junto de `key=` faria o
+# Streamlit reclamar de dois donos para o mesmo estado.
+if "sistema_editado" not in st.session_state:
+    st.session_state["sistema_editado"] = D.SISTEMA_PADRAO
+
+if st.button("Restaurar o padrao"):
+    st.session_state["sistema_editado"] = D.SISTEMA_PADRAO
+    st.rerun()
+
+sistema = st.text_area(
+    "System prompt",
+    height=320,
+    key="sistema_editado",
+    help="Vazio restaura as regras versionadas em `llm/prompts/prescritivo.py`.",
+)
+
+if sistema.strip() and sistema.strip() != D.SISTEMA_PADRAO.strip():
+    st.warning(
+        "Voce esta usando regras diferentes das versionadas. A conversa segue "
+        "funcionando — os guardrails nao leem este campo."
+    )
+
 st.session_state["llm_config"] = {
     "provedor": provedor, "modelo": modelo,
     "temperatura": temperatura, "max_tokens": max_tokens,
+    "sistema": sistema,
 }
 
 st.caption(
@@ -178,10 +221,27 @@ cliente = criar("openai", modelo="gpt-4o-mini")
 resposta = cliente.gerar([Mensagem("user", "ola")])
 ```
 
-Trocar `"openai"` por `"ollama"` nao muda mais nada. Cada classe resolve suas
-particularidades por dentro — a API da Anthropic, por exemplo, trata o `system`
-como parametro separado em vez de mensagem, e a conversao acontece dentro do
-proprio cliente.
+Trocar `"openai"` por `"ollama"` nao muda mais nada.
+
+Por dentro, quem fala com cada API e o **LangChain**, e as mensagens sao as dele:
+`SystemMessage`, `HumanMessage` e `AIMessage`. E o que resolve as diferencas sem
+remendo — a API da Anthropic, por exemplo, trata o `system` como parametro
+separado em vez de mensagem, e antes essa conversao era feita a mao dentro do
+cliente.
+
+O framework para **aqui**. A busca em dois estagios e a ordem dos nos continuam
+sendo codigo do projeto: o adaptador resolve diferenca entre provedores, nunca
+decisao.
+
+Do mesmo contrato sai a segunda forma de chamar o modelo:
+
+```python
+cliente.estruturar(mensagens, Sintomas)   # devolve objeto, nao texto
+```
+
+E *tool calling*: o esquema vira a assinatura de uma ferramenta e o modelo
+preenche os campos. E o que separa "vibrando e esquentando" em dois sintomas, na
+tela de Diagnostico.
 
 O que muda entre eles, e que a tela mostra:
 

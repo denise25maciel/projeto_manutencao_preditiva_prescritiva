@@ -91,7 +91,9 @@ Quanto mais concreto o sintoma, melhor: **onde**, **quando** e **o que mudou**.
                 st.warning("Escreva a descricao do problema.")
                 st.stop()
             with st.spinner("Procurando nos seis manuais..."):
-                nova = D.abrir_conversa_por_texto(descricao, k=8)
+                nova = D.abrir_conversa_por_texto(
+                    descricao, k=8, usar_llm=usar_llm, config_llm=cfg
+                )
             st.session_state["sessao"] = nova
             st.session_state.pop("diagnostico", None)
             st.rerun()
@@ -238,7 +240,9 @@ if sessao.origem == "texto":
         )
         if resposta:
             with st.spinner("Refazendo a busca com todos os sintomas..."):
-                st.session_state["sessao"] = D.detalhar_sintoma(sessao, resposta, k=8)
+                st.session_state["sessao"] = D.detalhar_sintoma(
+                    sessao, resposta, k=8, usar_llm=usar_llm, config_llm=cfg
+                )
             st.rerun()
 
         with st.expander("Por que a lista em vez de escolher o melhor"):
@@ -290,6 +294,31 @@ Nenhum modelo participa desta tela: o ranking e busca vetorial, o empate e um
                 f"🔒 travado ate o fim da conversa · melhor trecho "
                 f"{max(t.score for t in sessao.trechos_de_abertura):.3f}"
                 if sessao.trechos_de_abertura else "🔒 travado ate o fim da conversa"
+            )
+
+    # A separacao da fala em sintomas e a unica coisa que o modelo fez ate aqui,
+    # e ela muda o resultado da busca — entao fica a vista, com o antes e o
+    # depois. Se ele picotou errado, o tecnico ve na hora, em vez de descobrir
+    # pelo manual estranho que apareceu.
+    if len(sessao.sintomas) > 1 or sessao.nota_sintomas:
+        with st.expander(
+            f"Como a sua descricao foi lida — {len(sessao.sintomas)} sintoma(s)"
+        ):
+            st.markdown("**Voce escreveu**")
+            st.code(sessao.descricao or "—", language="text")
+            st.markdown("**O sistema procurou por**")
+            for s in sessao.sintomas:
+                st.markdown(f"- {s}")
+            if sessao.nota_sintomas:
+                st.caption(sessao.nota_sintomas)
+            st.caption(
+                "Cada sintoma vira uma busca, e cada trecho fica com o **maior** "
+                "score entre elas. Numa frase so, o vetor cai perto da media dos "
+                "sintomas — e a media nao e nenhum deles: a secao 'Mancal "
+                "Aquecido' seria derrubada por falar pouco de vibracao. Quem "
+                "separou foi o modelo, com saida estruturada; o que ele devolveu "
+                "passou por uma conferencia de codigo, que descarta sintoma que "
+                "nao aparece no que voce escreveu."
             )
 
     with st.expander("Ver a evidencia que apontou este procedimento"):
@@ -487,14 +516,16 @@ for turno in sessao.turnos:
             st.caption("🚫 recusado por codigo · o modelo nao foi chamado")
             continue
 
+        # `para_exibir` so rebaixa titulo e tira marcador de conversao. O texto
+        # gravado no turno continua intacto — a aba de auditoria o mostra cru.
         if turno.degradou:
-            st.markdown(turno.texto_para_historico)
+            st.markdown(D.para_exibir(turno.texto_para_historico))
             st.caption(
                 "⚠️ o texto acima e o do manual, sem prosa — a redacao do modelo "
                 "foi reprovada no G5 nas duas tentativas"
             )
         else:
-            st.markdown(turno.resposta)
+            st.markdown(D.para_exibir(turno.resposta))
 
         if turno.trechos:
             st.caption("**Fontes:** " + " · ".join(f"`{r}`" for r in turno.referencias))
@@ -516,7 +547,15 @@ for turno in sessao.turnos:
                         f"*{pag} · tipo: {t.campo or '—'} · "
                         f"similaridade {t.score:.3f}*"
                     )
-                    st.markdown(f"> {t.texto.strip()}")
+                    # O `>` vai em CADA linha, nao so na primeira: um `>` solto
+                    # no inicio nao alcanca o titulo que vem depois, e o bloco
+                    # saia metade citado, metade nao.
+                    st.markdown(
+                        "\n".join(
+                            f"> {linha}"
+                            for linha in D.para_exibir(t.texto).splitlines()
+                        )
+                    )
                     st.divider()
 
         selos = [f"{'✓' if v.passou else '✗'} {v.id}" for v in turno.vereditos]
@@ -558,8 +597,10 @@ if sessao.turnos:
 O historico enviado ao modelo **nao e o que esta na tela** — e o que foi
 verificado:
 
-- resposta que passou no G5 entra como esta
-- resposta reprovada **nao entra**; no lugar dela vai o trecho do manual
+- resposta que passou no G5 entra como `AIMessage`, isto e, como fala do modelo
+- resposta reprovada **nao entra**; no lugar dela vai o trecho do manual, e como
+  `SystemMessage` — porque aquele texto e do procedimento, e o modelo nunca o
+  escreveu. Marca-lo como fala dele seria dar-lhe uma afirmacao emprestada
 - recusa nao entra de forma alguma
 
 Sem isso, um deslize no turno 2 viraria contexto no turno 3, e o modelo o
@@ -569,9 +610,19 @@ trataria como fato ja estabelecido.
         historico = sessao.historico_para_prompt()
         if not historico:
             st.caption("Nada ainda — nenhum turno produziu conteudo verificado.")
-        for i, (q, r) in enumerate(historico, 1):
-            st.markdown(f"**{i}. {q}**")
-            st.code(r[:800] + ("..." if len(r) > 800 else ""), language="text")
+
+        # O tipo de cada mensagem na frente do texto: e ele que mostra que a
+        # conversa chega estruturada, e nao achatada num paragrafo so.
+        SELO = {
+            "human": ("🧑‍🔧", "HumanMessage", "pergunta do tecnico"),
+            "ai": ("🤖", "AIMessage", "resposta verificada no G5"),
+            "system": ("📄", "SystemMessage", "texto do manual, nao fala do modelo"),
+        }
+        for m in historico:
+            icone, classe, papel = SELO.get(m.type, ("•", m.type, ""))
+            st.markdown(f"{icone} **`{classe}`** — {papel}")
+            texto = str(m.content)
+            st.code(texto[:800] + ("..." if len(texto) > 800 else ""), language="text")
 
     with t2:
         if sessao.turnos[-1].prompt:

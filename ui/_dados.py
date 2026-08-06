@@ -12,6 +12,7 @@ tudo pandas, cacheavel — entao o import direto e o caminho simples e honesto.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from mp import config  # noqa: E402
 # Import barato: os SDKs so sao carregados dentro de cada cliente, na hora de
 # conectar. Aqui vem apenas o texto que descreve cada provedor.
 from mp.llm.client import DESCRICAO as DESCRICAO_PROVEDOR  # noqa: E402
+from mp.llm.prompts import SISTEMA as SISTEMA_PADRAO  # noqa: E402
 # O minimo do G4. A tela mostra ao lado de cada score para o numero poder ser
 # comparado com alguma coisa; reexportado aqui porque a UI nao importa `mp`.
 from mp.guardrails.rules import SCORE_MINIMO_CHUNK  # noqa: E402
@@ -649,25 +651,32 @@ def _cliente(usar_llm: bool, config_llm: dict | None):
     return criar(provedor, **opcoes)
 
 
-def abrir_conversa_por_texto(descricao: str, k: int = 8):
+def abrir_conversa_por_texto(descricao: str, k: int = 8, usar_llm: bool = False,
+                             config_llm: dict | None = None):
     """O caminho principal: o tecnico descreve o problema, o sistema acha o manual.
 
     Pode nao achar de primeira: quando os manuais empatam, a sessao volta com a
-    **lista de candidatos** e a escolha e do tecnico. Nao ha `cliente` aqui —
-    nenhum modelo participa de escolher o manual.
+    **lista de candidatos** e a escolha e do tecnico.
+
+    O modelo entra aqui numa tarefa so — **separar a fala em sintomas** — e nao
+    participa de escolher o manual. Sem ele, a descricao entra inteira e a busca
+    funciona igual, so que pior: ver `agente.separar_sintomas`.
     """
     from mp.agente import abrir_sessao_por_texto
 
     _embedder_aquecido()
-    return abrir_sessao_por_texto(descricao, k=k)
+    return abrir_sessao_por_texto(descricao, k=k,
+                                  cliente=_cliente(usar_llm, config_llm))
 
 
-def detalhar_sintoma(sessao, sintoma: str, k: int = 8):
+def detalhar_sintoma(sessao, sintoma: str, k: int = 8, usar_llm: bool = False,
+                     config_llm: dict | None = None):
     """Mais um sintoma entra e a busca recomeca com todos — sem teto de vezes."""
     from mp.agente import acrescentar_sintoma
 
     _embedder_aquecido()
-    return acrescentar_sintoma(sessao, sintoma, k=k)
+    return acrescentar_sintoma(sessao, sintoma, k=k,
+                               cliente=_cliente(usar_llm, config_llm))
 
 
 def escolher_documento(sessao, documento: str):
@@ -675,6 +684,16 @@ def escolher_documento(sessao, documento: str):
     from mp.agente import fixar_documento
 
     return fixar_documento(sessao, documento, por_escolha=True)
+
+
+def _sistema(config_llm: dict | None) -> str | None:
+    """As regras do prompt escolhidas na tela, ou `None` para as versionadas.
+
+    Texto vazio conta como `None`: apagar o campo inteiro restaura o padrao em
+    vez de mandar uma `SystemMessage` em branco.
+    """
+    texto = (config_llm or {}).get("sistema") or ""
+    return texto.strip() or None
 
 
 def resumo_de_abertura(sessao, usar_llm: bool = False,
@@ -686,7 +705,8 @@ def resumo_de_abertura(sessao, usar_llm: bool = False,
     """
     from mp.agente import resumo_inicial
 
-    return resumo_inicial(sessao, cliente=_cliente(usar_llm, config_llm), k=k)
+    return resumo_inicial(sessao, cliente=_cliente(usar_llm, config_llm), k=k,
+                          sistema=_sistema(config_llm))
 
 
 def responder_turno(sessao, pergunta: str, usar_llm: bool,
@@ -695,10 +715,43 @@ def responder_turno(sessao, pergunta: str, usar_llm: bool,
     from mp.agente import responder
 
     return responder(sessao, pergunta, cliente=_cliente(usar_llm, config_llm),
-                     k=k, so_prescritivos=so_prescritivos)
+                     k=k, so_prescritivos=so_prescritivos,
+                     sistema=_sistema(config_llm))
 
 
 # --- utilitarios de pagina --------------------------------------------------
+
+# `## 3. Componentes do Rolamento` no inicio de uma linha. O `[ \t]*` aceita o
+# titulo indentado, e o `#*$` come o fecho opcional do estilo `## Titulo ##`.
+_TITULO_MD = re.compile(r"^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*#*$", re.MULTILINE)
+
+# `<!-- campo: objetivo -->`, o marcador que a conversao do PDF deixou em cada
+# secao. Serve ao codigo, nao a quem le.
+_COMENTARIO_HTML = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def para_exibir(texto: str, nivel: int = 5) -> str:
+    """Rebaixa os titulos do texto e tira os marcadores de conversao.
+
+    **Por que existe.** Os 168 trechos vieram dos PDFs como Markdown, e todos
+    comecam com `## N. Titulo`. Esse texto vai inteiro para o prompt, entao o
+    modelo aprende o estilo pelo exemplo e responde com `##` tambem — que dentro
+    de um balao de conversa sai do tamanho de um titulo de pagina e grita mais
+    alto que a propria resposta.
+
+    Rebaixar para `#####` mantem a hierarquia (continua sendo titulo, continua
+    tendo espaco antes) e devolve o texto ao tamanho de leitura.
+
+    **E so aparencia, e so aqui.** O que foi gravado no turno e o que foi enviado
+    ao modelo nao mudam — a aba de auditoria mostra o texto cru, com `st.code`,
+    justamente para provar isso. Consertar no prompt seria pedir; consertar aqui
+    e garantir.
+    """
+    if not texto:
+        return ""
+    limpo = _COMENTARIO_HTML.sub("", texto)
+    return _TITULO_MD.sub(lambda m: f"{'#' * nivel} {m.group(1)}", limpo).strip()
+
 
 def configurar_pagina(titulo: str, icone: str = "🔧") -> None:
     st.set_page_config(page_title=f"{titulo} — Manutencao Prescritiva",

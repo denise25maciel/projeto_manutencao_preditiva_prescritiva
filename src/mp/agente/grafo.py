@@ -274,8 +274,44 @@ def fixar_documento(
     return sessao
 
 
+def separar_sintomas(descricao: str, cliente=None) -> tuple[list[str], str]:
+    """No 0 — a fala do tecnico vira uma lista de sintomas. Devolve `(sintomas, nota)`.
+
+    **O unico ponto do projeto em que o modelo devolve estrutura, e nao prosa.**
+    Por baixo e *tool calling*: `prompts.sintomas.Sintomas` e o formulario, e
+    `cliente.estruturar` faz o provedor preenche-lo.
+
+    Existe porque a busca precisa dos sintomas **separados**: ela codifica um a
+    um e fica com o maior score por trecho, enquanto uma frase unica vira um
+    vetor perto da media — e a media nao e nenhum dos sintomas. Ver
+    `rag.buscar_por_sintomas`.
+
+    **Degrada para o comportamento anterior.** Sem cliente, ou dando erro, a
+    descricao inteira volta como sintoma unico, que e como era antes desta
+    etapa. Extracao e melhoria da busca, nao requisito dela — e o modelo nao
+    pode ser capaz de derrubar a conversa.
+    """
+    descricao = descricao.strip()
+    if not descricao:
+        return [], ""
+    if cliente is None:
+        return [descricao], ""
+
+    try:
+        resultado = cliente.estruturar(
+            prompts.sintomas.montar(descricao), prompts.sintomas.Sintomas
+        )
+    except Exception as e:  # noqa: BLE001 — a nota vai para a tela
+        return [descricao], (
+            f"Nao deu para separar os sintomas ({type(e).__name__}); a busca usa "
+            "a descricao inteira."
+        )
+
+    return prompts.sintomas.conferir(descricao, list(resultado.sintomas))
+
+
 def acrescentar_sintoma(
-    sessao: Sessao, sintoma: str, k: int = 8, motor=None
+    sessao: Sessao, sintoma: str, k: int = 8, motor=None, cliente=None
 ) -> Sessao:
     """Mais um sintoma entra e a busca recomeca — com todos, nao so com o novo.
 
@@ -285,30 +321,41 @@ def acrescentar_sintoma(
     **Sem teto de tentativas**, porque desalinhamento e desbalanceamento tem
     sintomas parecidos de verdade e podem nunca se separar. Por isso a lista
     fica sempre na tela, e nao no fim de um contador.
+
+    O que o tecnico acrescenta passa pela mesma separacao da abertura: uma
+    frase com duas observacoes entra como duas, aqui tambem.
     """
     if sessao.aberta or not sintoma.strip():
         return sessao
 
-    sessao.sintomas.append(sintoma.strip())
+    novos, nota = separar_sintomas(sintoma, cliente)
+    sessao.sintomas.extend(novos)
+    sessao.nota_sintomas = nota
     return _avaliar_candidatos(sessao, k=k, motor=motor)
 
 
-def abrir_sessao_por_texto(descricao: str, k: int = 8, motor=None) -> Sessao:
+def abrir_sessao_por_texto(
+    descricao: str, k: int = 8, motor=None, cliente=None
+) -> Sessao:
     """Abre a conversa pela **descricao escrita** do problema.
 
     "O motor esta vibrando e esquentando o mancal": sem JSON nem rotulo, a
     pergunta e qual manual serve. Aqui so se monta a `Sessao`; o trabalho e do
     `_avaliar_candidatos`.
 
+    Com `cliente`, a fala e separada em sintomas antes da busca — ver
+    `separar_sintomas`. Sem ele, entra inteira, e a busca segue funcionando.
+
     Pode voltar **sem abrir**, com a lista de candidatos. E desfecho normal.
     """
     s = Sessao(rotulo="")
     s.descricao = descricao
-    s.sintomas = [descricao.strip()] if descricao.strip() else []
 
-    if not s.sintomas:
+    if not descricao.strip():
         s.motivo = "Descreva o problema para o sistema procurar o procedimento."
         return s
+
+    s.sintomas, s.nota_sintomas = separar_sintomas(descricao, cliente)
 
     return _avaliar_candidatos(s, k=k, motor=motor)
 
@@ -358,6 +405,7 @@ def responder(
     so_prescritivos: bool = True,
     motor=None,
     trechos=None,
+    sistema: str | None = None,
 ) -> Turno:
     """Uma volta completa: escopo, busca, G4, redacao, G5.
 
@@ -367,6 +415,10 @@ def responder(
     `trechos` pronto pula os nos 5 e 6. Serve ao resumo de abertura, cuja
     pergunta e do proprio sistema e ja nasce dentro do manual travado. Do G4 em
     diante o caminho e o mesmo.
+
+    `sistema` troca as regras do prompt, e a tela deixa edita-las. Os nos 5, 7 e
+    9 nao leem esse texto: escopo, G4 e G5 continuam valendo qualquer coisa que
+    seja escrita ali.
     """
     t0 = time.time()
     turno = Turno(pergunta=pergunta)
@@ -436,7 +488,8 @@ def responder(
 
     historico = sessao.historico_para_prompt(config.MAX_TURNOS_NO_PROMPT)
     mensagens = prompts.montar(pergunta, sessao.familia, turno.trechos,
-                               historico=historico, familias=sessao.familias)
+                               historico=historico, familias=sessao.familias,
+                               sistema=sistema)
     turno.prompt = prompts.texto_enviado(mensagens)
 
     if cliente is None:
@@ -474,7 +527,7 @@ def responder(
             f"{pergunta}\n\n[Aviso do sistema: a resposta anterior foi rejeitada — "
             f"{v.mensagem} As unicas fontes citaveis sao: {disponiveis}.]",
             sessao.familia, turno.trechos, historico=historico,
-            familias=sessao.familias,
+            familias=sessao.familias, sistema=sistema,
         )
 
     turno.segundos = round(time.time() - t0, 2)
@@ -523,7 +576,8 @@ def _trechos_de_abertura(sessao: Sessao, k: int, motor=None) -> list:
     return escolhidos[:k]
 
 
-def resumo_inicial(sessao: Sessao, cliente=None, k: int = 6, motor=None) -> Turno | None:
+def resumo_inicial(sessao: Sessao, cliente=None, k: int = 6, motor=None,
+                   sistema: str | None = None) -> Turno | None:
     """Responde problema, sintomas e correcao assim que o manual e fixado.
 
     O tecnico ia perguntar isso de qualquer jeito.
@@ -539,7 +593,7 @@ def resumo_inicial(sessao: Sessao, cliente=None, k: int = 6, motor=None) -> Turn
 
     turno = responder(
         sessao, PERGUNTA_DE_ABERTURA, cliente=cliente, k=k, motor=motor,
-        trechos=_trechos_de_abertura(sessao, k, motor=motor),
+        trechos=_trechos_de_abertura(sessao, k, motor=motor), sistema=sistema,
     )
     turno.abertura = True
     return turno
