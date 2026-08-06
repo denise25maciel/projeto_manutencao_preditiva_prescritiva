@@ -753,6 +753,155 @@ def para_exibir(texto: str, nivel: int = 5) -> str:
     return _TITULO_MD.sub(lambda m: f"{'#' * nivel} {m.group(1)}", limpo).strip()
 
 
+# --- classificacao supervisionada -------------------------------------------
+#
+# Import adiado dentro de cada funcao: `mp.classificacao` puxa o `sklearn`, e
+# quem abre a tela de dados nao deve pagar esse carregamento.
+#
+# As funcoes caras aqui nao sao "caras" no sentido das outras. `r_clf_validacao`
+# treina 10 florestas de 400 arvores; `r_clf_experimento_janela` treina 10 por
+# tamanho testado. Por isso elas ficam atras de um botao na tela, e nunca sao
+# chamadas na abertura da pagina.
+
+
+@st.cache_data(**CACHE)
+def r_clf_leituras():
+    """Leituras com `evento` e `familia` — o insumo de tudo nesta secao."""
+    from mp.classificacao import preparar
+
+    return preparar(dados())
+
+
+@st.cache_data(**CACHE)
+def r_clf_amostras(modo: str = "janela", tamanho: int | None = None,
+                   incluir_regime: bool = False):
+    from mp.classificacao import criar_amostras
+
+    return criar_amostras(r_clf_leituras(), modo=modo, tamanho=tamanho,
+                          incluir_regime=incluir_regime)
+
+
+@st.cache_data(**CACHE)
+def r_clf_cobertura(tamanho: int | None = None):
+    from mp.classificacao import cobertura_dos_eventos
+
+    return cobertura_dos_eventos(r_clf_leituras(), tamanho=tamanho)
+
+
+@st.cache_data(**CACHE)
+def r_clf_colunas(incluir_regime: bool = False) -> list[str]:
+    from mp.classificacao import colunas_de_entrada
+
+    return colunas_de_entrada(r_clf_leituras(), incluir_regime=incluir_regime)
+
+
+@st.cache_data(**CACHE)
+def r_clf_nomes_features(incluir_regime: bool = False) -> list[str]:
+    """Nome de cada coluna da matriz, na ordem.
+
+    `criar_amostras` ja devolve isto em `DataFrame.attrs`, mas `attrs` nao
+    atravessa o cache do Streamlit de forma garantida — ele serializa o
+    DataFrame, e metadado de dicionario e o primeiro a se perder. Recalcular e
+    barato e nao depende disso.
+    """
+    from mp.classificacao import nomes_das_features
+
+    return nomes_das_features(r_clf_colunas(incluir_regime))
+
+
+@st.cache_data(**CACHE)
+def r_clf_csv(tamanho: int | None = None, incluir_regime: bool = False) -> str:
+    """A matriz inteira em CSV, para o botao de download.
+
+    Cacheado por parametro simples, e nao pelo DataFrame: o `download_button`
+    precisa dos bytes prontos a cada rerun, e montar 6 mil linhas x 80 colunas
+    toda vez travaria a tela.
+    """
+    import numpy as np
+    import pandas as pd
+
+    amostras = r_clf_amostras("janela", tamanho, incluir_regime)
+    tabela = pd.DataFrame(
+        np.vstack(amostras["features"].to_list()),
+        columns=r_clf_nomes_features(incluir_regime),
+    )
+    tabela.insert(0, "familia", amostras["familia"].to_numpy())
+    tabela.insert(1, "evento", amostras["evento"].to_numpy())
+    return tabela.to_csv(index=False)
+
+
+@st.cache_data(show_spinner="Treinando e validando 10 florestas...")
+def r_clf_validacao(modo: str = "janela", tamanho: int | None = None,
+                    incluir_regime: bool = False):
+    from mp.classificacao import validar
+
+    return validar(r_clf_amostras(modo, tamanho, incluir_regime))
+
+
+@st.cache_data(**CACHE)
+def r_clf_confusao(modo: str, tamanho: int | None, incluir_regime: bool,
+                   estrategia: str, normalizar: bool = True):
+    from mp.classificacao import matriz_de_confusao
+
+    resultado = r_clf_validacao(modo, tamanho, incluir_regime)
+    return matriz_de_confusao(resultado["estrategias"][estrategia], normalizar)
+
+
+@st.cache_data(**CACHE)
+def r_clf_por_familia(modo: str, tamanho: int | None, incluir_regime: bool,
+                      estrategia: str):
+    from mp.classificacao import acerto_por_familia
+
+    resultado = r_clf_validacao(modo, tamanho, incluir_regime)
+    return acerto_por_familia(resultado["estrategias"][estrategia])
+
+
+@st.cache_data(show_spinner="Comparando os tamanhos de janela...")
+def r_clf_experimento_janela(tamanhos: tuple[int, ...] | None = None):
+    from mp.classificacao import experimento_janela
+
+    return experimento_janela(r_clf_leituras(), tamanhos=tamanhos)
+
+
+@st.cache_data(show_spinner="Medindo o efeito do regime de operacao...")
+def r_clf_experimento_regime(tamanho: int | None = None):
+    from mp.classificacao import experimento_regime
+
+    return experimento_regime(r_clf_leituras(), tamanho=tamanho)
+
+
+@st.cache_resource(show_spinner="Treinando a floresta...")
+def clf_modelo(tamanho: int | None = None, incluir_regime: bool = False):
+    """A floresta ajustada. `cache_resource`: e objeto, nao valor."""
+    from mp.classificacao import Classificador
+
+    return Classificador(tamanho=tamanho, incluir_regime=incluir_regime).treinar(dados())
+
+
+@st.cache_data(show_spinner="Treinando sem este evento...")
+def r_clf_previsao_honesta(evento: int, tamanho: int | None = None,
+                           incluir_regime: bool = False):
+    """Palpite para um evento que ficou de fora do treino."""
+    from mp.classificacao import prever_evento_segurado
+
+    return prever_evento_segurado(r_clf_leituras(), evento, tamanho=tamanho,
+                                  incluir_regime=incluir_regime)
+
+
+@st.cache_data(**CACHE)
+def r_clf_eventos_consultaveis(tamanho: int | None = None):
+    """Eventos que geram pelo menos uma janela — os que da para consultar."""
+    leituras = r_clf_leituras()
+    tam = tamanho or config.CLF_JANELA_TAMANHO
+    por_evento = (
+        leituras.groupby(["evento", "familia", config.COLUNA_ROTULO], observed=True)
+        .size()
+        .rename("n_leituras")
+        .reset_index()
+    )
+    return por_evento[por_evento["n_leituras"] >= tam].reset_index(drop=True)
+
+
 def configurar_pagina(titulo: str, icone: str = "🔧") -> None:
     st.set_page_config(page_title=f"{titulo} — Manutencao Prescritiva",
                        page_icon=icone, layout="wide")

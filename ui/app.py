@@ -253,18 +253,8 @@ st.divider()
 # ==========================================================================
 # ATO 3 — Da para confiar?
 # ==========================================================================
-st.header("Ato 3 — Da para confiar no que chegou?", divider="gray")
+st.header("Ato 3 — Qualidade dos dados", divider="gray")
 
-st.markdown(
-    """
-Os atos 1 e 2 mostraram **quanto** dado existe e **como ele se parece**. Antes de
-tirar conclusao dele, a pergunta e se ele se sustenta: campos vazios, colunas que
-repetem a mesma medida, leituras identicas a anterior, horarios impossiveis.
-
-Nada disto e corrigido aqui — e levantamento. O que fica pendente de proposito
-esta registrado como pendencia, com o motivo.
-"""
-)
 
 _secao_qualidade.render()
 
@@ -346,12 +336,27 @@ st.header("Depois desta historia", divider="gray")
 st.markdown(
     """
 Os seis atos acima prepararam as duas fontes: o que a maquina mediu e o que os
-manuais mandam fazer. As telas do menu a esquerda usam isso:
+manuais mandam fazer. Quem usa isso sao as duas telas do menu a esquerda.
 
-- **Modelo de Linguagem** — escolha do provedor (local ou API), as regras do
-  prompt e o teste de conexao
-- **Diagnostico** — o fluxo completo: o tecnico descreve o problema ou chega o
-  JSON do sensor, o sistema acha o procedimento e conversa sobre ele, citando
-  documento, secao e pagina
+**Diagnostico** — o fluxo completo, em duas abas:
+
+- **Diagnostico e conversa** — o tecnico descreve o problema ou chega o JSON do
+  sensor, o sistema acha o procedimento e conversa sobre ele, citando documento,
+  secao e pagina
+- **Modelo de linguagem** — escolha do provedor (local ou API), as regras do
+  prompt e o teste de conexao. Fica ali dentro, e nao numa tela separada, porque
+  trocar de modelo no meio de uma conversa nao pode custar sair dela
+
+**Classificacao** — a pergunta anterior a todas as outras: *da para descobrir a
+familia so pelos numeros do sensor, sem ninguem anotar o rotulo?* Em tres abas:
+
+- **Preparacao dos dados** — como uma leitura vira um exemplo que se pode
+  aprender, e por que uma leitura sozinha nao e um
+- **O modelo e o que ele vale** — a floresta, e as duas maneiras de cortar
+  treino e teste que dao 92% e 44% sobre exatamente os mesmos dados. So uma das
+  duas responde *"vai funcionar numa maquina nova?"*
+- **Executar e ver o resultado** — o pipeline rodando de verdade, etapa por
+  etapa e cronometrado, terminando no laudo dos testes. Sem cache: o tempo que
+  a tela mostra e o tempo que levou
 """
 )

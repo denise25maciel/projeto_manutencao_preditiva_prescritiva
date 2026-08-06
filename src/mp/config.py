@@ -253,6 +253,56 @@ MARGEM_MINIMA_DOCUMENTO = 0.25
 SHARE_MINIMO_DOCUMENTO = 0.45
 
 # --------------------------------------------------------------------------
+# Classificacao supervisionada (mp.classificacao)
+# --------------------------------------------------------------------------
+#
+# Sinal auxiliar, nao decisor. O manual continua sendo autorizado pelo rotulo
+# via fault_map.yaml; estes numeros so governam a floresta que da um segundo
+# palpite sobre a familia.
+
+# Quantas leituras consecutivas formam uma amostra. O passo e metade disso, o
+# que da 50% de sobreposicao entre janelas vizinhas.
+#
+# O valor e medido, nao herdado. O projeto de origem usava 180 sobre a
+# segmentacao dele; sobre os eventos daqui — que quebram tambem no `rpm` e por
+# isso sao mais curtos — 180 descartaria 72% dos eventos.
+#
+# O numero nao e escolha de gosto: o tamanho dos eventos e quase todo discreto,
+# porque a bancada gravava aquisicoes de comprimento fixo.
+#
+#     50 leituras  : 354 eventos     500 leituras : 15 eventos
+#   1000 leituras  : 105 eventos    2000 leituras :  7 eventos
+#
+# Dai o degrau, medido:
+#
+#     janela 50 -> 508 de 526 eventos aproveitados (3,4% descartados), 15 familias
+#     janela 60 -> 152 de 526 eventos aproveitados ( 71% descartados), 14 familias
+#
+# 50 e a maior janela que ainda cabe no evento tipico. Um passo acima dela
+# elimina dois tercos do conjunto e leva uma familia inteira junto — e isso nao
+# aparece em metrica nenhuma, porque a familia simplesmente deixa de existir
+# para o modelo. Justificativa completa na aba "O modelo", secao do experimento.
+#
+# A 2 s por leitura, a janela cobre ~1,7 minuto de motor.
+CLF_JANELA_TAMANHO = 50
+
+# Tamanhos comparados no experimento da interface. Escolhidos para o degrau
+# entre 50 e 60 aparecer na tabela, e nao so ser afirmado aqui.
+CLF_JANELAS_TESTADAS = (20, 50, 60, 90, 180)
+
+# Arvores da floresta. 400 vem do projeto de origem; acima de algumas centenas
+# o ganho satura e so o tempo de treino cresce.
+CLF_N_ARVORES = 400
+
+# Partes da validacao cruzada. 5 e o padrao usual: com 10 sobrariam eventos de
+# menos por parte, e a nota de cada fold ficaria ruidosa demais para comparar.
+CLF_N_FOLDS = 5
+
+# Fixa o sorteio das arvores e dos folds. Sem isso, duas execucoes da mesma
+# tela dariam numeros diferentes e nada seria conferivel.
+CLF_SEMENTE = 0
+
+# --------------------------------------------------------------------------
 # Qualidade / outliers
 # --------------------------------------------------------------------------
 

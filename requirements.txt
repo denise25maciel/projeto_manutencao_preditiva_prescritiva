@@ -37,6 +37,12 @@ pydantic>=2.0,<3         # o esquema que o modelo preenche ao separar sintomas
 python-dotenv>=1.0,<2    # le a chave do `.env`, que nunca vai para o git
 httpx>=0.27,<1           # lista os modelos baixados no Ollama
 
+# --- Aprendizado de maquina ------------------------------------------------
+# Deixou de ser extra: a UI nao abre sem ele. Duas telas dependem — o motor de
+# similaridade da Parte 3 (kNN e StandardScaler) e a tela de Classificacao
+# (RandomForest e as duas estrategias de validacao cruzada).
+scikit-learn>=1.5,<2
+
 # --- Notebooks -------------------------------------------------------------
 # Fora do runtime: nem o modulo nem a UI dependem destes.
 jupyterlab>=4.0,<5
@@ -46,7 +52,6 @@ matplotlib>=3.8,<4
 # Entram nas proximas partes — ainda nao instalados para manter o ambiente
 # leve. Estao mapeados como extras no pyproject.toml.
 #
-#   Parte 3   scikit-learn>=1.5
 #   Parte 4   sentence-transformers
 #   Parte 5   langchain-openai | langchain-ollama | langchain-anthropic
 #   Parte 6   fastapi, uvicorn

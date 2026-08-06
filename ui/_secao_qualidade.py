@@ -202,11 +202,6 @@ Todos os calculos desta interface ja fazem isso.
 Precisamos agrupar as leituras em **eventos** — cada vez que a maquina foi medida
 com o mesmo defeito. Para isso e preciso saber **quando uma medicao terminou**.
 
-A pergunta e: quantos segundos sem leitura significam "pararam de gravar"?
-
-Se o numero for baixo demais, uma medicao normal se parte em varias. Se for alto
-demais, duas medicoes diferentes viram uma so. A escolha nao pode ser chute.
-
 Abaixo, os intervalos entre leituras **do mesmo tipo de falha** — que sao os unicos
 em que essa duvida existe. Quando o nome da falha muda, o evento acaba de qualquer jeito.
 """
@@ -502,32 +497,11 @@ diferentes com o horario errado, e nao o mesmo registro copiado.
     # ==========================================================================
     # 3. Colunas sem informacao propria
     # ==========================================================================
-    st.header("3. Colunas que nao acrescentam informacao")
-
-    st.subheader("3.1 Colunas com sempre o mesmo valor")
-    st.markdown(
-        """
-Uma coluna que tem sempre o mesmo valor nao distingue nada — e como uma pergunta
-em que todo mundo responde igual. Alem de inutil, ela quebra o calculo de
-padronizacao usado mais adiante.
-"""
-    )
+    st.header("3. Analise das colunas")
 
     n_const = int(constantes["constante"].sum())
     if n_const == 0:
         st.success("**Nenhuma coluna tem sempre o mesmo valor.** Todas variam.")
-        st.info(
-            """
-**Isto desmente uma suspeita que tinhamos.**
-
-Achavamos que `z_peak_vel_comp_freq_hz` e `x_peak_vel_comp_freq_hz` fossem sempre
-61 Hz. Nao sao: tem 79 e 50 valores diferentes. 61 Hz e so o valor mais comum
-(aparece em 60% e 49% das linhas).
-
-Ou seja, **essas colunas ficam**. A frequencia muda justamente em alguns defeitos,
-que e a informacao que queremos.
-"""
-        )
     else:
         st.warning(f"{n_const} coluna(s) com sempre o mesmo valor.")
 
@@ -548,16 +522,6 @@ que e a informacao que queremos.
     )
 
     st.subheader("3.2 Colunas que sao a mesma medida em outra unidade")
-    st.markdown(
-        """
-Algumas colunas repetem a mesma medida convertida: polegadas e milimetros,
-Fahrenheit e Celsius.
-
-Para confirmar, nao olhamos se elas "andam juntas" — fizemos a conta.
-Multiplicamos a coluna em polegada por 25,4 e comparamos com a coluna em milimetro.
-Se der igual, uma e copia da outra.
-"""
-    )
 
     st.dataframe(
         redundantes,
@@ -574,11 +538,7 @@ Se der igual, uma e copia da outra.
     st.success(
         f"""
 **{int(redundantes['redundante'].sum())} de {len(redundantes)} pares confirmados como copia.**
-
-A maior diferenca encontrada foi de 0,016 — o tamanho do arredondamento do proprio
-arquivo. Nao ha medida independente ali.
-
-Ficamos com milimetro e Celsius. Manter as duas versoes faria o sistema contar a
+Manter as duas versoes faria o sistema contar a
 mesma grandeza duas vezes e dar peso dobrado a ela.
 """
     )
@@ -713,22 +673,6 @@ estatistica jogaria fora a falha que o sistema existe para encontrar.
                 help="Quantas vezes o maior valor ultrapassa o limite alto."
             ),
         },
-    )
-
-    st.info(
-        """
-### Duas situacoes bem diferentes na mesma tabela
-
-**Muitos valores fora, mas nenhum muito longe** (coluna *quantas vezes o limite*
-perto de 1). E o caso de `z_peak_vel_comp_freq_hz`, com 25% fora. Acontece porque
-quase tudo esta grudado em 61 Hz, entao a faixa central fica estreitissima e
-qualquer variacao legitima cai fora. **E efeito do metodo, nao anomalia.**
-
-**Poucos valores fora, mas muito longe** (coluna *quantas vezes o limite* na casa
-das dezenas). `z_peak_acceleration_g` chega a **49 vezes** o limite. Sao poucos
-eventos, mas violentos. **Este e o sinal que interessa** — provavelmente o impacto
-de um rolamento com defeito.
-"""
     )
 
     st.divider()

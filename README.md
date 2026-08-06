@@ -149,12 +149,41 @@ arquivo tem leituras repetidas é ler número sem saber a margem dele. Os atos 5
 6 preparam as **duas fontes** que o sistema cruza — e elas só se encontram pela
 coluna `fault`, nunca por semelhança entre número e texto.
 
-No menu lateral ficam as duas telas que **usam** isso:
+No menu lateral fica a tela que **usa** isso — o **Diagnóstico**, em duas abas:
 
-| Tela | O que faz |
+| Aba | O que faz |
 |---|---|
-| **Modelo de Linguagem** | Escolha do provedor (local ou API), as regras do prompt e o teste de conexão |
-| **Diagnóstico** | O fluxo completo: o técnico descreve o problema ou chega o JSON do sensor, o sistema acha o procedimento e conversa sobre ele, citando documento, seção e página |
+| **Diagnóstico e conversa** | O fluxo completo: o técnico descreve o problema ou chega o JSON do sensor, o sistema acha o procedimento e conversa sobre ele, citando documento, seção e página |
+| **Modelo de linguagem** | Quais provedores estão disponíveis, a configuração, as regras do prompt e o teste de conexão — com uma conversa livre, sem guardrail nenhum, de propósito, para servir de contraste |
+
+A configuração era uma tela separada e virou aba (`ui/_secao_modelo.py`): trocar
+de modelo no meio de uma conversa não pode custar sair da tela e perder o fio.
+
+E a tela **Classificação**, que responde a pergunta anterior a todas as outras —
+*dá para descobrir a família só pelos números do sensor, sem ninguém anotar?*
+Em três abas:
+
+| Aba | O que faz |
+|---|---|
+| **Preparação dos dados** | Como uma leitura vira um exemplo: o rótulo resolvido pelo `fault_map.yaml`, o agrupamento em eventos, as colunas escolhidas, o recorte em janelas de 50 leituras e o resumo de cada janela em 80 números |
+| **O modelo e o que ele vale** | A floresta de 400 árvores, as duas maneiras de cortar treino e teste, onde o modelo erra, um evento segurado fora do treino para experimentar, e os dois experimentos de configuração |
+| **Executar e ver o resultado** | O pipeline rodando de verdade: as 5 etapas em ordem, cada uma cronometrada e mostrando o que produziu, e no fim o laudo dos testes — métricas, folds, matriz de confusão e relatório para baixar |
+
+As duas primeiras leem de cache; a terceira **não usa cache nenhum**, de
+propósito — na segunda execução os tempos apareceriam próximos de zero, e um
+painel de execução que não mede execução é enfeite. O mesmo relatório sai no
+terminal, sem Streamlit:
+
+```bash
+python -m mp.classificacao.execucao
+```
+
+Ela vem de um repositório irmão de classificação, sobre os mesmos dados, e foi
+**adaptada, não copiada**: o algoritmo veio inteiro, mas cada *decisão* passou a
+sair de onde este projeto já a tomava — o rótulo do `fault_map.yaml` em vez de
+regras no código, o grupo do evento (`fault` + `rpm`) em vez da troca de rótulo,
+e as colunas da mesma função que o kNN usa. O detalhe está em
+`src/mp/classificacao/`.
 
 Cada ato mora num `ui/_secao_*.py` com uma função `render()`. Módulos fora de
 `ui/pages/` não viram item de menu — é assim que a sequência fica única sem
@@ -234,12 +263,13 @@ reimplementam nada. Nada em produção depende deles.
 │   ├── segmentos.py          # primitiva: agrupar linhas consecutivas
 │   ├── analysis/             # DESCREVE: loader, profiling, quality, signatures
 │   ├── ingestion/            # TRANSFORMA: sensors (eventos), documents (PDF->MD)
+│   ├── classificacao/        # amostras, modelo (RandomForest), validacao
 │   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
 │   ├── app.py                # entrypoint e narrativa única: streamlit run ui/app.py
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
-│   ├── _secao_*.py           # os atos da narrativa, cada um com render()
-│   └── pages/                # só o que é tela de verdade: modelo e diagnóstico
+│   ├── _secao_*.py           # blocos com render(): os atos e o form do modelo
+│   └── pages/                # só o que é tela de verdade: diagnóstico, classificação
 ├── requirements.txt          # instalação do ambiente
 └── pyproject.toml            # metadados + extras das partes seguintes
 ```
