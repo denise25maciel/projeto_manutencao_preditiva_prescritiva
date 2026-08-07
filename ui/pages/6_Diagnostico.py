@@ -29,6 +29,9 @@ import _secao_modelo
 
 
 D.configurar_pagina("Diagnostico", "🩺")
+# Teto de tamanho para os titulos que vierem dentro dos baloes. O saneamento do
+# texto continua sendo `para_exibir` / `em_uma_linha`; isto e a rede embaixo.
+D.estilo_do_chat()
 
 st.title("🩺 Diagnostico e Conversa")
 st.caption("Descreva o problema. O sistema acha o procedimento e conversa sobre ele.")
@@ -128,16 +131,96 @@ with aba_diagnostico:
                 height=140,
             )
 
-            if st.button("Procurar o procedimento", type="primary", key="btn_texto"):
-                if not descricao.strip():
-                    st.warning("Escreva a descricao do problema.")
-                    st.stop()
-                with st.spinner("Procurando nos seis manuais..."):
-                    nova = D.abrir_conversa_por_texto(
-                        descricao, k=8, usar_llm=usar_llm, config_llm=cfg
+            # ------------------------------------------------------------------
+            # A leitura do sensor, no mesmo formulario
+            # ------------------------------------------------------------------
+            #
+            # Existe uma aba so para o sensor, ao lado, para quem so tem o JSON.
+            # Aqui ele e **complemento da descricao**: o tecnico conta o que ve e,
+            # se tiver o numero, cola junto — que e como a coisa acontece na
+            # pratica, e nao em duas telas separadas.
+            #
+            # Quando vem preenchido, quem decide a familia sao os numeros. Nao e
+            # preferencia: o kNN compara com 166 mil leituras e devolve
+            # evidencia contavel, enquanto a descricao passa por uma busca
+            # semantica que sempre volta com alguma coisa.
+            with st.expander("📈 Tenho a leitura do sensor (opcional)"):
+                st.caption(
+                    "Com a leitura preenchida, **quem decide a familia sao os "
+                    "numeros** — e o resultado dessa comparacao entra na conversa "
+                    "como a primeira fala. Vazio, o sistema decide pela descricao."
+                )
+
+                c_semente, c_botao = st.columns([1, 2])
+                with c_semente:
+                    semente_txt = st.number_input(
+                        "Sorteio", 0, 9999, 0, step=1, key="txt_semente",
+                        help="Muda qual leitura real do historico e sorteada.",
                     )
+                with c_botao:
+                    st.markdown("&nbsp;")
+                    if st.button("Preencher com um evento real do historico",
+                                 key="btn_preencher", width="stretch"):
+                        st.session_state["sensor_json"] = json.dumps(
+                            D.r_evento_de_exemplo(None, int(semente_txt)),
+                            indent=2, ensure_ascii=False,
+                        )
+                        st.rerun()
+
+                st.text_area(
+                    "JSON da leitura do sensor",
+                    key="sensor_json",
+                    height=220,
+                    placeholder='{"z_rms_velocity_mm_s": 3.24, "rpm": 1000, ...}',
+                    help="O campo `fault`, se vier, e a anotacao do operador — "
+                         "ela sera confrontada com o que os vizinhos indicarem, "
+                         "nunca obedecida.",
+                )
+
+            if st.button("Procurar o procedimento", type="primary", key="btn_texto"):
+                sensor_txt = (st.session_state.get("sensor_json") or "").strip()
+
+                if not descricao.strip() and not sensor_txt:
+                    st.warning(
+                        "Escreva a descricao do problema, ou cole a leitura do "
+                        "sensor no campo acima."
+                    )
+                    st.stop()
+
+                evento = None
+                if sensor_txt:
+                    try:
+                        evento = json.loads(sensor_txt)
+                    except json.JSONDecodeError as e:
+                        st.error(f"JSON invalido: {e}")
+                        st.stop()
+
+                if evento is not None:
+                    # --- caminho do sensor -------------------------------------
+                    with st.spinner("Comparando com as 166 mil leituras do historico..."):
+                        diag = D.diagnosticar(evento, k=k_vizinhos)
+                        nova = D.abrir_conversa(evento=evento, diagnostico=diag)
+
+                    # O anuncio do resultado entra como FALA, e nao como painel de
+                    # metricas: o tecnico esta lendo uma conversa. Os numeros sao
+                    # os do kNN — o modelo, quando ligado, so os redige, e o G5N
+                    # confere se cada numero escrito foi um numero apurado.
+                    with st.spinner("Escrevendo o que os numeros indicam..."):
+                        D.classificar_na_conversa(
+                            nova, diag, usar_llm=usar_llm, config_llm=cfg
+                        )
+
+                    st.session_state["diagnostico"] = diag
+                    st.session_state["evento"] = evento
+                else:
+                    # --- caminho por texto -------------------------------------
+                    with st.spinner("Procurando nos seis manuais..."):
+                        nova = D.abrir_conversa_por_texto(
+                            descricao, k=8, usar_llm=usar_llm, config_llm=cfg
+                        )
+                    st.session_state.pop("diagnostico", None)
+
                 st.session_state["sessao"] = nova
-                st.session_state.pop("diagnostico", None)
                 st.rerun()
 
         # --------------------------------------------------------------- sensor
@@ -269,10 +352,10 @@ with aba_diagnostico:
                             st.rerun()
 
                     if trecho is not None:
-                        texto = " ".join(trecho.texto.split())
-                        if len(texto) > 320:
-                            texto = texto[:320].rsplit(" ", 1)[0] + "..."
-                        st.caption(texto)
+                        # `em_uma_linha` e nao `para_exibir`: numa previa de uma
+                        # linha o `##` do inicio do trecho nao e hierarquia, e
+                        # o Markdown o leria como cabecalho dentro da legenda.
+                        st.caption(D.em_uma_linha(trecho.texto))
 
             # O campo de texto vem DEPOIS da lista: detalhar e a alternativa a
             # escolher, nao o caminho obrigatorio. Sem teto de vezes — quem decide
@@ -514,6 +597,51 @@ with aba_diagnostico:
         for v in sessao.vereditos_abertura:
             st.markdown(f"**{v.id}** {'✓' if v.passou else '✗'} — {v.mensagem}")
 
+    # ==========================================================================
+    # O que os numeros disseram — antes do veredito da abertura
+    # ==========================================================================
+    #
+    # Desenhado aqui, e nao no laco da conversa la embaixo, porque este turno
+    # **vale mesmo quando o fluxo para**. Saber que os numeros apontam `normal`,
+    # ou que apontam uma familia sem manual, e a resposta — nao a falta dela. Se
+    # ficasse depois do `st.stop()`, sumiria justamente nos casos em que e a
+    # unica coisa que o sistema tem a dizer.
+    for _turno in sessao.turnos:
+        if not _turno.classificacao:
+            continue
+        with st.chat_message("assistant"):
+            st.markdown(D.para_exibir(_turno.resposta))
+            _selo = "🔢 numeros do kNN"
+            if _turno.usou_llm:
+                _v = next((v for v in _turno.vereditos if v.id == "G5N"), None)
+                _selo += (
+                    f" · redigido pelo modelo · {'✓' if _v and _v.passou else '✗'} G5N"
+                    if _v else " · redigido pelo modelo"
+                )
+                if _turno.degradou:
+                    _selo += " · texto do modelo descartado, numeros preservados"
+            else:
+                _selo += " · sem modelo, texto do proprio sistema"
+            st.caption(_selo)
+
+            with st.expander("Contra o que esta resposta foi conferida"):
+                st.caption(
+                    "O **G5N** so aceita, na prosa, numero que esteja nesta "
+                    "lista. Ela foi apurada pelo kNN antes de o modelo ser "
+                    "chamado — ele redige, nunca produz."
+                )
+                st.dataframe(
+                    pd.DataFrame(
+                        [{"fato apurado": k, "valor": str(v)}
+                         for k, v in _turno.fatos.items()]
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
+                if _turno.prompt:
+                    st.caption("O prompt exato que foi enviado:")
+                    st.code(_turno.prompt, language="text")
+
     if not sessao.aberta:
         with st.chat_message("assistant"):
             st.markdown(f"**Nao posso seguir com esta conversa.** {sessao.motivo}")
@@ -536,13 +664,21 @@ with aba_diagnostico:
     #
     # Roda uma vez so — depois `sessao.turnos` deixa de estar vazio e a condicao
     # nao volta a valer, mesmo com os reruns do Streamlit.
-    if not sessao.turnos:
+    # O turno de classificacao NAO conta como "a conversa ja comecou": ele
+    # anuncia o que os numeros disseram, e o resumo do manual e a continuacao
+    # natural dele. Sem esta distincao, colar a leitura do sensor faria o
+    # sistema pular o procedimento inteiro.
+    if not any(not t.classificacao for t in sessao.turnos):
         with st.spinner("Lendo o procedimento..."):
             D.resumo_de_abertura(sessao, usar_llm=usar_llm, config_llm=cfg,
                                  k=k_trechos + 1)
         st.rerun()
 
     for turno in sessao.turnos:
+        # Ja desenhado la em cima, antes do veredito da abertura.
+        if turno.classificacao:
+            continue
+
         # O turno de abertura nao teve pergunta do tecnico — desenhar um balao de
         # usuario com a pergunta que o sistema fez a si mesmo seria mentira visual.
         if not turno.abertura:
@@ -629,54 +765,3 @@ with aba_diagnostico:
                                   config_llm=cfg, k=k_trechos)
         st.rerun()
 
-    # ==========================================================================
-    # 5. Auditoria
-    # ==========================================================================
-    if sessao.turnos:
-        st.divider()
-        st.subheader("5. Auditoria")
-
-        t1, t2 = st.tabs(["Historico verificado", "O que foi enviado ao modelo"])
-
-        with t1:
-            st.markdown(
-                """
-    O historico enviado ao modelo **nao e o que esta na tela** — e o que foi
-    verificado:
-
-    - resposta que passou no G5 entra como `AIMessage`, isto e, como fala do modelo
-    - resposta reprovada **nao entra**; no lugar dela vai o trecho do manual, e como
-      `SystemMessage` — porque aquele texto e do procedimento, e o modelo nunca o
-      escreveu. Marca-lo como fala dele seria dar-lhe uma afirmacao emprestada
-    - recusa nao entra de forma alguma
-
-    Sem isso, um deslize no turno 2 viraria contexto no turno 3, e o modelo o
-    trataria como fato ja estabelecido.
-    """
-            )
-            historico = sessao.historico_para_prompt()
-            if not historico:
-                st.caption("Nada ainda — nenhum turno produziu conteudo verificado.")
-
-            # O tipo de cada mensagem na frente do texto: e ele que mostra que a
-            # conversa chega estruturada, e nao achatada num paragrafo so.
-            SELO = {
-                "human": ("🧑‍🔧", "HumanMessage", "pergunta do tecnico"),
-                "ai": ("🤖", "AIMessage", "resposta verificada no G5"),
-                "system": ("📄", "SystemMessage", "texto do manual, nao fala do modelo"),
-            }
-            for m in historico:
-                icone, classe, papel = SELO.get(m.type, ("•", m.type, ""))
-                st.markdown(f"{icone} **`{classe}`** — {papel}")
-                texto = str(m.content)
-                st.code(texto[:800] + ("..." if len(texto) > 800 else ""), language="text")
-
-        with t2:
-            if sessao.turnos[-1].prompt:
-                st.caption(
-                    "O texto exato do ultimo turno. Nada alem disto: sem internet, "
-                    "sem os outros manuais, sem memoria de conversas anteriores."
-                )
-                st.code(sessao.turnos[-1].prompt, language="text")
-            else:
-                st.caption("O ultimo turno parou antes de chegar ao modelo.")

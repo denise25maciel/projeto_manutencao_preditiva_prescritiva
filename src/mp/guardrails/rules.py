@@ -1,13 +1,24 @@
-"""As seis verificacoes, na ordem.
+"""As oito verificacoes, na ordem.
 
 | ID | Pergunta | Se falhar |
-|----|----------|-----------|
-| G0 | O JSON recebido faz sentido? | rejeita a entrada |
-| G1 | Achou vizinhos parecidos o bastante? | "sem ocorrencias similares" |
-| G2 | E defeito, ou so um estado normal? | encerra o fluxo prescritivo |
-| G3 | Essa familia tem manual? | "sem documentacao" |
-| G4 | Os trechos recuperados servem? | trata como G3 |
-| G5 | A citacao existe mesmo no texto? | regenera ou degrada |
+|-----|----------|-----------|
+| G0  | O JSON recebido faz sentido? | rejeita a entrada |
+| G1  | Achou vizinhos parecidos o bastante? | "sem ocorrencias similares" |
+| G1T | A evidencia aponta UM manual? | mostra a lista, o tecnico escolhe |
+| G2  | E defeito, ou so um estado normal? | encerra o fluxo prescritivo |
+| G3  | Essa familia tem manual? | "sem documentacao" |
+| G4  | Os trechos recuperados servem? | trata como G3 |
+| G5  | A citacao existe mesmo no texto? | regenera ou degrada |
+| G5N | Os numeros da prosa foram apurados? | regenera ou escreve por codigo |
+
+As duas ultimas sao a mesma pergunta sobre materias diferentes: o **G5** cuida
+do turno que responde a partir do manual, e confere citacao; o **G5N** cuida do
+turno que anuncia o que a similaridade apurou, onde nao ha manual a citar e o
+que se confere e numero. Sem ele, o unico turno sem verificacao seria justamente
+o que da o diagnostico.
+
+O **G1T** so existe no caminho por texto, quando o documento e o resultado da
+busca em vez da entrada dela.
 
 **Sao codigo, nao prompt.** Pedir num prompt que o modelo "nao invente citacao"
 e uma sugestao. Conferir depois, comparando com o texto que foi enviado, e uma
@@ -346,6 +357,81 @@ def g5_citacoes_existem(resposta: str, trechos) -> Veredito:
 
     return Veredito("G5", True, f"{len(encontradas)} citacao(oes) conferida(s).",
                     {"citadas": sorted(f"{d}, secao {s}" for d, s in encontradas)})
+
+
+# --------------------------------------------------------------------------
+# G5N — a prosa preservou os numeros apurados?
+# --------------------------------------------------------------------------
+
+# Numero com virgula ou ponto decimal, com ou sem sinal de porcentagem depois.
+_NUMERO = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _formas(valor) -> set[str]:
+    """As grafias aceitaveis de um numero apurado.
+
+    O mesmo fato pode ser escrito de varios jeitos legitimos, e reprovar por
+    formatacao seria reprovar o certo: 0,72 e 72% sao o mesmo numero, e o
+    portugues escreve virgula onde o Python escreve ponto.
+    """
+    formas: set[str] = set()
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return formas
+
+    candidatos = [valor, round(float(valor), 1), round(float(valor), 2),
+                  round(float(valor), 3)]
+    # Fracao tambem vale escrita como porcentagem, e vice-versa.
+    if 0 <= float(valor) <= 1:
+        candidatos += [round(float(valor) * 100, 1), round(float(valor) * 100)]
+    if float(valor) == int(valor):
+        candidatos.append(int(valor))
+
+    for c in candidatos:
+        texto = f"{c}".rstrip("0").rstrip(".") if isinstance(c, float) else f"{c}"
+        formas.add(texto)
+        formas.add(texto.replace(".", ","))
+    return formas
+
+
+def g5n_numeros_apurados(resposta: str, fatos: dict) -> Veredito:
+    """Todo numero da prosa tem de ser um numero que o codigo apurou.
+
+    **Existe porque o G5 nao alcanca este turno.** O G5 confere citacao de
+    manual; a classificacao de um evento nao vem de manual nenhum — vem do kNN.
+    Sem uma trava propria, o unico turno da conversa sem verificacao seria
+    justamente o que anuncia o diagnostico.
+
+    A regra e a mesma dos outros guardrails: o modelo **redige**, nunca produz.
+    Aqui isso vira uma pergunta conferivel — cada numero escrito aparece no
+    bloco de fatos que foi enviado?
+
+    Aceita a mesma quantidade escrita de formas diferentes (`0,72`, `0.72`,
+    `72%`), porque reprovar por formatacao reprovaria o certo. Nao aceita numero
+    novo, que e o que interessa barrar.
+    """
+    permitidos: set[str] = set()
+    for valor in fatos.values():
+        permitidos |= _formas(valor)
+
+    escritos = _NUMERO.findall(resposta or "")
+    # Normaliza para comparar: `0,720` e `0,72` sao o mesmo numero escrito.
+    inventados = sorted(
+        {n for n in escritos
+         if n not in permitidos
+         and n.replace(",", ".").rstrip("0").rstrip(".") not in
+            {p.replace(",", ".") for p in permitidos}}
+    )
+
+    if inventados:
+        return Veredito(
+            "G5N", False,
+            "A resposta traz numeros que nao foram apurados: "
+            + ", ".join(inventados),
+            {"inventados": inventados, "permitidos": sorted(permitidos)},
+        )
+
+    return Veredito("G5N", True, f"{len(escritos)} numero(s) conferido(s).",
+                    {"escritos": escritos})
 
 
 # --------------------------------------------------------------------------

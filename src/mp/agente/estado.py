@@ -46,6 +46,14 @@ class Turno:
     # outros: passou por G4, redacao e G5, e entra no historico verificado.
     abertura: bool = False
 
+    # Turno que anuncia o que a SIMILARIDADE apurou, antes de qualquer manual.
+    # Nao passa por G4 nem G5 — nao ha trecho de manual nele —, e sim pelo
+    # **G5N**, que confere se cada numero escrito foi um numero apurado.
+    # `fatos` e o bloco que o G5N usou como lista de permitidos; fica guardado
+    # para a auditoria poder mostrar contra o que a resposta foi conferida.
+    classificacao: bool = False
+    fatos: dict = field(default_factory=dict)
+
     usou_llm: bool = False
     provedor: str | None = None
     modelo: str | None = None
@@ -63,7 +71,14 @@ class Turno:
 
         Resposta verificada entra como esta. Resposta reprovada **nao entra** —
         no lugar dela vai o texto do manual, que e o que se pode garantir.
+
+        O turno de classificacao e o caso em que "o que se pode garantir" nao e
+        um trecho de manual: e o proprio texto, porque quando ele degrada a
+        prosa do modelo ja foi trocada pela versao de codigo, com os numeros
+        apurados. Nao ha o que substituir depois.
         """
+        if self.classificacao:
+            return self.resposta
         if self.verificada and not self.degradou:
             return self.resposta
         if self.trechos:

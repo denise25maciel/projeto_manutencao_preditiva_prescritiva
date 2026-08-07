@@ -207,7 +207,7 @@ def verificar_existencia_conserto(
 
 
 def tabela_familias(caminho: str | None = None) -> pd.DataFrame:
-    """O catalogo inteiro como DataFrame — para a UI e para os notebooks."""
+    """O catalogo inteiro como DataFrame — para a UI e para quem inspecionar."""
     mapa = carregar_fault_map(caminho)
     linhas = []
     for familia, dados in mapa["familias"].items():

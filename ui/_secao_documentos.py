@@ -29,13 +29,10 @@ def render() -> None:
 
     st.markdown(
         """
-    Os manuais chegaram em PDF. PDF e otimo para ler, mas ruim para o computador
-    procurar dentro. Aqui eles sao convertidos para **Markdown** — texto simples, com
-    as secoes numeradas preservadas.
-
-    Isso importa porque, mais adiante, o sistema precisa **citar a fonte**: nao basta
-    dizer "alinhe o motor", tem de dizer *"conforme o Doc2, secao 9"*. Para isso, as
-    secoes precisam estar separadas e identificadas.
+    Os manuais chegaram em PDF e foram convertidos para markdown para melhores resultados. 
+    Um dos arquivos precisou primeiro ser convertido para txt. 
+    A saida normal seria OCR (leitura automatica de imagem), 
+    mas isso exige instalar um programa a parte, o que quebraria a promessa de "baixar o projeto e rodar". Entao o conteudo foi transcrito e guardado ao lado do PDF. A origem fica registrada em cada arquivo gerado, para nao confundir com transcricao com extracao automatica.
     """
     )
 
@@ -123,17 +120,6 @@ def render() -> None:
         st.info(
             f"""
     **{', '.join(nomes)} veio escaneado.**
-
-    Sao 17 paginas de imagem, sem texto de verdade dentro — o computador nao consegue
-    copiar nada dali (extrai 52 caracteres, todos de cabecalho).
-
-    A saida normal seria OCR (leitura automatica de imagem), mas isso exige instalar um
-    programa a parte, o que quebraria a promessa de "baixar o projeto e rodar". Entao o
-    conteudo foi **transcrito** e guardado ao lado do PDF. A origem fica registrada em
-    cada arquivo gerado, para ninguem confundir transcricao com extracao automatica.
-
-    Como este e justamente o manual de rolamentos — o maior grupo de falhas do arquivo —
-    vale conferir a transcricao contra o PDF antes da entrega.
     """
         )
 
@@ -192,57 +178,6 @@ def render() -> None:
     longo["presente"] = longo["secoes"] != ""
     ordem_campos = matriz["campo"].tolist()
 
-    st.altair_chart(
-        alt.Chart(longo)
-        .mark_rect(stroke="white", strokeWidth=2)
-        .encode(
-            x=alt.X("documento:N", title=None, axis=alt.Axis(orient="top", labelAngle=0)),
-            y=alt.Y("campo:N", title=None, sort=ordem_campos),
-            color=alt.Color(
-                "presente:N",
-                title=None,
-                scale=alt.Scale(domain=[True, False], range=["#2d6a4f", "#d1495b"]),
-                legend=alt.Legend(labelExpr="datum.label == 'true' ? 'tem' : 'falta'"),
-            ),
-            tooltip=["documento", "campo", alt.Tooltip("secoes:N", title="secao(oes)")],
-        )
-        .properties(height=28 * len(ordem_campos)),
-        width="stretch",
-    )
-
-    st.subheader("O que esta faltando")
-    pendentes = D.r_pendentes()
-
-    if pendentes.empty:
-        st.success("Todos os manuais cobrem os itens esperados.")
-    else:
-        st.warning(
-            f"**{len(pendentes)} itens em falta**, em {pendentes['documento'].nunique()} manuais."
-        )
-        st.dataframe(
-            pendentes[["documento", "campo_ausente", "titulo"]],
-            hide_index=True,
-            column_config={
-                "documento": "manual",
-                "campo_ausente": "item que falta",
-                "titulo": st.column_config.TextColumn("titulo do manual", width="large"),
-            },
-        )
-        st.markdown(
-            """
-    **Nem toda falta e um problema. Uma delas e.**
-
-    O item **Indicadores de monitoramento** falta no manual de desalinhamento (Doc2) e no
-    de desbalanceamento (Doc3). Os outros quatro manuais tem esse item, e o de rolamentos
-    chega a listar `Kurtosis`, `Crest Factor` e `RMS` — que sao exatamente colunas do
-    arquivo de sensores.
-
-    Ou seja: para rolamento, correia, polia e rotor inclinado existe uma ponte explicita
-    entre **o que o sensor mede** e **o que o manual manda acompanhar**. Para
-    desalinhamento e desbalanceamento, essa ponte precisa ser deduzida.
-    """
-        )
-
     # ==========================================================================
     # 3. Ligacao com a coluna fault
     # ==========================================================================
@@ -271,17 +206,6 @@ def render() -> None:
     O desenho abaixo liga cada **manual** (esquerda) as **falhas que ele atende**
     (direita). O tamanho do circulo e proporcional ao numero de leituras daquela falha
     no arquivo de sensores.
-
-    ### Por que essa ligacao e feita a mao
-
-    Poderiamos deixar o computador procurar o manual mais parecido com a falha. O
-    problema e que **uma busca por semelhanca sempre devolve alguma coisa** — mesmo
-    quando nao existe manual nenhum para aquele defeito, ela devolveria o "menos
-    diferente", e o sistema responderia com confianca sobre algo que nao tem base.
-
-    Por isso a ligacao e uma **lista fixa, escrita a mao** e guardada em
-    `data/fault_map.yaml`. Quando a falha nao esta na lista, o sistema **recusa** em vez
-    de improvisar.
     """
     )
 
@@ -377,71 +301,4 @@ def render() -> None:
         .properties(height=max(420, 34 * len(dir_)))
         .configure_view(stroke=None),
         width="stretch",
-    )
-
-    st.dataframe(
-        base[["familia", "cobertura", "documento", "titulo_documento", "n_rotulos",
-              "n_leituras", "e_problema", "g3_libera"]],
-        hide_index=True,
-        height=420,
-        column_config={
-            "familia": "falha",
-            "cobertura": "situacao",
-            "documento": "manual",
-            "titulo_documento": st.column_config.TextColumn("titulo", width="large"),
-            "n_rotulos": st.column_config.NumberColumn("nomes", format="%d"),
-            "n_leituras": st.column_config.NumberColumn("leituras", format="%d"),
-            "e_problema": st.column_config.CheckboxColumn("e defeito?"),
-            "g3_libera": st.column_config.CheckboxColumn(
-                "pode prescrever?",
-                help="Se nao, o sistema para antes de consultar o modelo de linguagem."
-            ),
-        },
-    )
-
-    st.subheader("Lendo o desenho")
-
-    lista_sem = ", ".join(f"`{f}`" for f in sem_doc_problema["familia"])
-    leituras_sem = int(sem_doc_problema["n_leituras"].sum())
-
-    st.error(
-        f"""
-    **{len(sem_doc_problema)} defeitos nao tem manual: {lista_sem}.**
-
-    Sao {leituras_sem:,} leituras no arquivo — dados existem, procedimento nao.
-
-    Para esses casos o sistema vai responder *"Sem documentacao — registre um
-    documento"* e **nao** vai consultar o modelo de linguagem.
-
-    Isso e o comportamento correto, nao uma falha. Um modelo de linguagem sabe falar
-    sobre ventoinha e falta de fase por conhecimento geral, e produziria uma resposta
-    convincente. Mas essa resposta nao seria o procedimento **desta empresa**, e nao
-    haveria fonte para citar. Recusar e melhor que inventar.
-    """.replace(",", ".")
-    )
-
-    st.warning(
-        """
-    **`eccentric_rotor` fica no meio do caminho (linha tracejada).**
-
-    O manual de polias (Doc5) tem uma secao sobre excentricidade. Mas e excentricidade
-    **de polia**, e o dado aqui e excentricidade **de rotor**. Mesmo fenomeno fisico,
-    peca diferente.
-
-    Marcamos como **cobertura parcial** e **nao** liberamos a prescricao. Aceitar essa
-    ligacao faria o sistema mandar ajustar a polia quando o problema esta no rotor.
-
-    Isso vale a atencao: e a segunda maior familia de falhas do arquivo.
-    """
-    )
-
-    st.info(
-        """
-    **`normal`, `teste`, `acelerando` e `motor_desligado` tambem aparecem sem manual —
-    mas por outro motivo.**
-
-    Nao sao defeitos, sao estados da maquina. Nao existe procedimento de correcao para
-    uma maquina que esta funcionando bem, e o sistema encerra o atendimento antes mesmo
-    de procurar manual.
-    """
     )

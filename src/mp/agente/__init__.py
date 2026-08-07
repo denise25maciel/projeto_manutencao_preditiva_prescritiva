@@ -9,11 +9,13 @@ from mp.agente.grafo import (
     abrir_sessao,
     abrir_sessao_por_texto,
     acrescentar_sintoma,
+    fatos_do_diagnostico,
     fixar_documento,
     no_escopo,
     responder,
     resumo_inicial,
     separar_sintomas,
+    turno_de_classificacao,
 )
 
 __all__ = [
@@ -22,9 +24,11 @@ __all__ = [
     "abrir_sessao",
     "abrir_sessao_por_texto",
     "acrescentar_sintoma",
+    "fatos_do_diagnostico",
     "fixar_documento",
     "responder",
     "resumo_inicial",
     "no_escopo",
     "separar_sintomas",
+    "turno_de_classificacao",
 ]

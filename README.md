@@ -18,11 +18,21 @@ decisão das equipes técnicas.
 | 0 | Módulo de análise exploratória | ✅ concluída |
 | 1 | Eventos e `fault_map.yaml` | ✅ concluída |
 | 2 | Banco SQLite via SQLAlchemy | ✅ concluída |
-| 3 | Motor de similaridade (kNN) | ⬜ |
-| 4 | RAG e guardrails G0–G5 | ⬜ |
-| 5 | LLM local (Ollama) | ⬜ |
+| 3 | Motor de similaridade (kNN) | ✅ concluída |
+| 4 | RAG e guardrails | ✅ concluída |
+| 5 | O agente: grafo, multi-turno, cliente plugável | ✅ concluída |
+| — | Classificação supervisionada (Random Forest) | ✅ concluída |
 | 6 | API FastAPI + deploy | ⬜ |
 | 7 | Auditoria: assinatura medida × procedimento descrito | ⬜ |
+
+> **Sobre a Parte 5.** O fluxo está completo e o cliente é plugável desde o
+> primeiro dia, mas o desenvolvimento usou a API da OpenAI. **Trocar para o
+> Ollama não muda uma linha do pipeline** — é uma escolha na interface. A meta
+> de entrega continua sendo local.
+>
+> A **classificação supervisionada** não estava no plano original: veio de um
+> repositório irmão, sobre os mesmos dados, e entrou como sinal auxiliar. Ela
+> não decide manual nem entra no caminho do modelo de linguagem.
 
 ## Configuração do ambiente
 
@@ -75,10 +85,11 @@ pip install -r requirements.txt
 ```
 
 O `requirements.txt` cobre o que a Parte 0 precisa: pandas, numpy, pyarrow,
-streamlit, altair, pyyaml — mais jupyterlab e matplotlib para os notebooks.
-As bibliotecas das partes seguintes (scikit-learn, FastAPI) estão listadas em
-comentário no fim do arquivo e mapeadas como extras no `pyproject.toml`; entram
-quando cada parte for implementada.
+streamlit, altair, pyyaml e scikit-learn.
+O `scikit-learn` deixou de ser opcional: a interface não abre sem ele — o motor
+de similaridade e a tela de Classificação dependem dos dois. As bibliotecas que
+ainda faltam (FastAPI, `sentence-transformers`) estão listadas em comentário no
+fim do arquivo e mapeadas como extras no `pyproject.toml`.
 
 **Modelo de linguagem (Parte 5).** O `langchain-core` já está na lista, mas ele
 não fala com provedor nenhum — traz só as mensagens tipadas e a saída
@@ -93,9 +104,9 @@ pip install langchain-openai      # para desenvolver, exige OPENAI_API_KEY no .e
 Sem nenhum deles o sistema continua funcionando: a conversa devolve o texto cru
 do manual, e é assim que se comprova que o conteúdo não vem do modelo.
 
-> O import de `src/mp/` funciona sem instalar o pacote — `ui/_dados.py` e o
-> notebook resolvem o caminho sozinhos. Se preferir o pacote instalado, use
-> `pip install -e .` (opcional).
+> O import de `src/mp/` funciona sem instalar o pacote — `ui/_dados.py` resolve
+> o caminho sozinho. Se preferir o pacote instalado, use `pip install -e .`
+> (opcional).
 
 ### 4. Disponibilizar o dataset
 
@@ -153,7 +164,7 @@ No menu lateral fica a tela que **usa** isso — o **Diagnóstico**, em duas aba
 
 | Aba | O que faz |
 |---|---|
-| **Diagnóstico e conversa** | O fluxo completo: o técnico descreve o problema ou chega o JSON do sensor, o sistema acha o procedimento e conversa sobre ele, citando documento, seção e página |
+| **Diagnóstico e conversa** | O fluxo completo: o técnico descreve o problema e, se tiver, cola a leitura do sensor no mesmo formulário. Com a leitura, a **classificação entra na conversa como a primeira fala** — os números do kNN, redigidos pelo modelo e conferidos pelo G5N. Depois vem o procedimento, citando documento, seção e página |
 | **Modelo de linguagem** | Quais provedores estão disponíveis, a configuração, as regras do prompt e o teste de conexão — com uma conversa livre, sem guardrail nenhum, de propósito, para servir de contraste |
 
 A configuração era uma tela separada e virou aba (`ui/_secao_modelo.py`): trocar
@@ -205,16 +216,13 @@ O primeiro carregamento lê o CSV (~0,4 s para 166 mil linhas) e guarda em
 >
 > Pare com `Ctrl+C` e rode de novo.
 
-### Notebook
+### Sem abrir a interface
+
+O pipeline de classificação roda inteiro no terminal e imprime o mesmo relatório
+que a aba 3 mostra — as cinco etapas cronometradas, as métricas, os folds:
 
 ```bash
-jupyter lab notebooks/01_eda.ipynb
-```
-
-Ou execute sem abrir a interface:
-
-```bash
-jupyter nbconvert --to notebook --execute notebooks/01_eda.ipynb --stdout > /dev/null
+python -m mp.classificacao.execucao
 ```
 
 ### Usar o módulo direto
@@ -238,16 +246,19 @@ assinaturas_por_rotulo(df, min_leituras=100)  # tabela de assinaturas
    `data/fault_map.yaml`, curado à mão e versionado.
 2. **Fronteira determinística/generativa.** Toda pergunta respondível por consulta ao
    banco não passa pelo LLM. O modelo recebe números prontos; nunca os produz.
-3. **Guardrails são código, não prompt.** Verificações determinísticas G0–G5, na ordem.
+3. **Guardrails são código, não prompt.** Oito verificações determinísticas, na
+   ordem: G0 a G5, mais a G1T (a evidência aponta um manual?) e a G5N (os números
+   da prosa foram apurados?).
 4. **Busca vetorial nunca retorna vazio** — por isso G3 é um `SELECT` no catálogo, nunca
    uma similaridade semântica.
-5. **Sem duplicação de lógica.** Notebooks e UI importam `src/mp/`. Nunca reimplementam.
+5. **Sem duplicação de lógica.** A UI importa `src/mp/`. Nunca reimplementa.
 
-### Notebooks não fazem parte do runtime
+### A interface não faz parte do runtime
 
-Os notebooks em `notebooks/` **documentam decisões** — o porquê de cada limiar, cada
-descarte de coluna, cada escolha de agregação. Eles importam `src/mp/` e não
-reimplementam nada. Nada em produção depende deles.
+`ui/` **documenta decisões** — o porquê de cada limiar, cada descarte de coluna,
+cada escolha de agregação. Ela chama `src/mp/` e não reimplementa nada, e é por
+isso que remover a interface inteira não quebraria o pipeline: a API e
+`python -m mp.classificacao.execucao` chamam os mesmos módulos.
 
 ### Estrutura
 
@@ -257,7 +268,6 @@ reimplementam nada. Nada em produção depende deles.
 │   ├── processed/            # fora do git — .md gerados dos PDFs
 │   ├── mp.db                 # fora do git
 │   └── fault_map.yaml        # VERSIONADO — é decisão, não dado
-├── notebooks/01_eda.ipynb
 ├── src/mp/
 │   ├── config.py             # todo limiar e caminho
 │   ├── segmentos.py          # primitiva: agrupar linhas consecutivas

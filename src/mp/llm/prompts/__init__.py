@@ -3,14 +3,16 @@
 Um arquivo por tarefa. Prompt e texto versionado, nao string solta no meio do
 codigo — quando a resposta muda de qualidade, e preciso saber o que mudou.
 
-Sao dois, e eles pedem coisas diferentes ao modelo:
+Sao tres, e eles pedem coisas diferentes ao modelo:
 
 - `prescritivo` — a redacao da resposta. Devolve **texto**, e o G5 confere.
 - `sintomas` — a separacao da fala do tecnico. Devolve **estrutura**, via
   `with_structured_output`, e o `conferir` do proprio modulo filtra.
+- `classificacao` — o anuncio do que o kNN apurou. Devolve **texto**, e o G5N
+  confere se cada numero escrito foi um numero apurado.
 """
 
-from mp.llm.prompts import sintomas
+from mp.llm.prompts import classificacao, sintomas
 from mp.llm.prompts.prescritivo import (
     SISTEMA,
     bloco_de_assunto,
@@ -28,4 +30,5 @@ __all__ = [
     "bloco_de_fatos",
     "texto_enviado",
     "sintomas",
+    "classificacao",
 ]

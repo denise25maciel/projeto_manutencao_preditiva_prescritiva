@@ -12,6 +12,7 @@ from mp.guardrails.rules import (
     g3_tem_documento,
     g4_trechos_relevantes,
     g5_citacoes_existem,
+    g5n_numeros_apurados,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "g3_tem_documento",
     "g4_trechos_relevantes",
     "g5_citacoes_existem",
+    "g5n_numeros_apurados",
 ]

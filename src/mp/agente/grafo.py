@@ -576,6 +576,117 @@ def _trechos_de_abertura(sessao: Sessao, k: int, motor=None) -> list:
     return escolhidos[:k]
 
 
+# --------------------------------------------------------------------------
+# O anuncio do que os numeros disseram
+# --------------------------------------------------------------------------
+
+
+def fatos_do_diagnostico(diagnostico) -> dict:
+    """O que o kNN apurou, com as chaves escritas por extenso.
+
+    As chaves viram o vocabulario da frase que o modelo escreve: com
+    `n_episodios` ele escreve "n episodios"; com "ocorrencias parecidas no
+    historico" ele escreve portugues. E o mesmo dicionario que o **G5N** usa
+    como lista de numeros permitidos, entao o que nao estiver aqui nao pode
+    aparecer na resposta.
+    """
+    if diagnostico is None:
+        return {}
+
+    fatos: dict = {
+        "familia indicada": diagnostico.familia or "indefinida",
+        "vizinhos consultados": diagnostico.k,
+        "vizinhos que votaram nessa familia": diagnostico.votos,
+        "confianca": diagnostico.confianca,
+        "ocorrencias parecidas no historico": diagnostico.n_episodios,
+        "distancia do vizinho mais proximo": round(diagnostico.distancia_min, 3),
+    }
+
+    if (rpm := diagnostico.rpm_predominante) is not None:
+        fatos["rotacao predominante dos vizinhos (rpm)"] = rpm
+
+    # A anotacao do operador entra por ultimo e so quando existe: ela e o unico
+    # fato que pode CONTRARIAR os outros, e o prompt manda destacar isso.
+    if diagnostico.familia_do_operador:
+        fatos["familia anotada pelo operador"] = diagnostico.familia_do_operador
+
+    return fatos
+
+
+def turno_de_classificacao(
+    sessao: Sessao, diagnostico=None, cliente=None, sistema: str | None = None
+) -> Turno | None:
+    """A classificacao do evento entra na conversa como fala, nao como painel.
+
+    **O modelo nao classifica.** Quando este no roda, o kNN ja comparou o evento
+    com o historico, ja votou por familia e ja mediu a distancia. O que se pede
+    ao modelo e uma frase sobre fatos fechados — e o **G5N** confere depois se
+    cada numero escrito foi um numero apurado.
+
+    Sem cliente, ou quando o G5N reprova, o proprio codigo escreve a frase. Nos
+    dois casos os numeros sao os mesmos: o que se perde e a prosa, nunca o
+    conteudo.
+
+    Vem **antes** do resumo do manual de proposito. A conversa passa a ler como
+    o trabalho e feito: primeiro o que a maquina mostrou, depois o que o
+    procedimento manda fazer.
+    """
+    if diagnostico is None:
+        return None
+
+    t0 = time.time()
+    fatos = fatos_do_diagnostico(diagnostico)
+
+    turno = Turno(pergunta="")
+    turno.abertura = True
+    turno.classificacao = True
+    turno.fatos = fatos
+
+    if cliente is None:
+        turno.resposta = prompts.classificacao.texto_de_fallback(fatos)
+        turno.segundos = round(time.time() - t0, 2)
+        sessao.turnos.append(turno)
+        return turno
+
+    mensagens = prompts.classificacao.montar(fatos, sistema=sistema)
+    turno.prompt = prompts.classificacao.texto_enviado(mensagens)
+
+    for tentativa in range(1, MAX_TENTATIVAS + 1):
+        turno.tentativas = tentativa
+        r = cliente.gerar(mensagens)
+
+        turno.resposta = r.texto.strip()
+        turno.usou_llm = True
+        turno.provedor, turno.modelo = r.provedor, r.modelo
+        turno.tokens_entrada += r.tokens_entrada
+        turno.tokens_saida += r.tokens_saida
+
+        v = g.g5n_numeros_apurados(turno.resposta, fatos)
+        if v.passou or tentativa == MAX_TENTATIVAS:
+            turno.vereditos.append(v)
+            turno.verificada = v.passou
+            turno.degradou = not v.passou
+            break
+
+        # Reprovou e ainda ha tentativa: repete dizendo qual numero sobrou.
+        mensagens = prompts.classificacao.montar(fatos, sistema=sistema) + [
+            prompts.classificacao.HumanMessage(
+                f"[Aviso do sistema: a resposta anterior foi rejeitada — "
+                f"{v.mensagem} Escreva de novo usando apenas os numeros do "
+                "bloco de fatos, exatamente como estao.]"
+            )
+        ]
+
+    # Degradou: o texto do modelo nao pode ficar, porque ele contem numero que
+    # ninguem apurou. Entra a versao de codigo, com os numeros certos.
+    if turno.degradou:
+        turno.resposta = prompts.classificacao.texto_de_fallback(fatos)
+
+    turno.segundos = round(time.time() - t0, 2)
+    sessao.turnos.append(turno)
+    return turno
+
+
 def resumo_inicial(sessao: Sessao, cliente=None, k: int = 6, motor=None,
                    sistema: str | None = None) -> Turno | None:
     """Responde problema, sintomas e correcao assim que o manual e fixado.
@@ -587,8 +698,14 @@ def resumo_inicial(sessao: Sessao, cliente=None, k: int = 6, motor=None,
     e a unica sem guardrail.
 
     Sem `cliente`, degrada para o texto cru das secoes.
+
+    O turno de classificacao, quando existe, ja esta no histórico e **nao**
+    conta como "a conversa ja comecou": ele anuncia o que os numeros disseram,
+    e o resumo do manual e a continuacao natural dele.
     """
-    if not sessao.aberta or sessao.turnos:
+    if not sessao.aberta:
+        return None
+    if any(not t.classificacao for t in sessao.turnos):
         return None
 
     turno = responder(

@@ -1,8 +1,8 @@
 """Decisoes numericas e caminhos do projeto.
 
 Regra do GUIA.md: nenhum limiar fica escondido no meio do codigo. Tudo que e
-escolha (limiar, fator, tamanho de janela) mora aqui, com o notebook que justifica
-citado em comentario.
+escolha (limiar, fator, tamanho de janela) mora aqui, com a medicao que o
+justifica escrita no comentario.
 """
 
 from __future__ import annotations
@@ -64,7 +64,8 @@ COLUNA_ROTULO = "fault"
 COLUNA_TEMPO = "created_at"
 COLUNA_ID = "id"
 
-# Pares (redundante, canonica, fator) — confirmados no 01_eda.ipynb.
+# Pares (redundante, canonica, fator) — confirmados na tela de Qualidade dos
+# Dados, secao "1.2 Colunas que sao a mesma medida em outra unidade".
 # Mantemos o SI: mm/s e Celsius. As colunas imperiais sao a mesma informacao
 # multiplicada por uma constante; manter as duas so infla a dimensionalidade
 # do kNN e faz o StandardScaler contar a mesma grandeza duas vezes.
@@ -140,7 +141,9 @@ COLUNAS_QUEBRA_EVENTO = (COLUNA_ROTULO, "rpm")
 #
 # Escolhemos 10 s por ser o centro da faixa vazia: maior margem dos dois lados se
 # uma coleta futura tiver ritmo um pouco diferente.
-# Justificativa completa na tela "Qualidade dos Dados", secao 2.
+# Justificativa completa na tela "Qualidade dos Dados", secao 1 — "Ritmo e
+# continuidade da coleta", no bloco "Quanto tempo parado significa que a coleta
+# acabou". O nome e mais estavel que o numero, que ja mudou uma vez.
 GAP_NOVO_EPISODIO_S = 10.0
 
 # Teto de pontos enviados ao navegador num grafico de serie temporal. Acima

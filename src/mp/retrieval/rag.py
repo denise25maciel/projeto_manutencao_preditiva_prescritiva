@@ -533,7 +533,7 @@ def secoes_por_campo(
 
 
 def como_tabela(resultado: Resultado) -> pd.DataFrame:
-    """Os trechos em DataFrame, para a UI e os notebooks.
+    """Os trechos em DataFrame, para a UI e para quem inspecionar.
 
     Resultado vazio devolve as mesmas colunas, sem linha: quem mostra a tabela
     nao precisa tratar o caso a parte.

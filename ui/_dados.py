@@ -696,6 +696,21 @@ def _sistema(config_llm: dict | None) -> str | None:
     return texto.strip() or None
 
 
+def classificar_na_conversa(sessao, diagnostico, usar_llm: bool = False,
+                            config_llm: dict | None = None):
+    """O que o kNN apurou entra na conversa como fala, antes do manual.
+
+    **Nao passa `sistema`.** As regras editaveis da tela sao as da resposta
+    prescritiva; aplicá-las aqui trocaria as regras da classificacao pelas de
+    outra tarefa, e o prompt de classificacao tem as suas — nao inventar numero,
+    nao recomendar nada, destacar divergencia.
+    """
+    from mp.agente import turno_de_classificacao
+
+    return turno_de_classificacao(sessao, diagnostico,
+                                  cliente=_cliente(usar_llm, config_llm))
+
+
 def resumo_de_abertura(sessao, usar_llm: bool = False,
                        config_llm: dict | None = None, k: int = 6):
     """Problema, sintomas e correcao, assim que o manual e fixado.
@@ -751,6 +766,34 @@ def para_exibir(texto: str, nivel: int = 5) -> str:
         return ""
     limpo = _COMENTARIO_HTML.sub("", texto)
     return _TITULO_MD.sub(lambda m: f"{'#' * nivel} {m.group(1)}", limpo).strip()
+
+
+def em_uma_linha(texto: str, maximo: int = 320) -> str:
+    """O mesmo texto achatado numa linha so, sem marca de titulo, truncado.
+
+    **Rebaixar nao serve aqui, remover sim.** `para_exibir` mantem o `#` porque
+    no balao da conversa o titulo ainda e um titulo — tem espaco antes e depois,
+    e a hierarquia ajuda a ler. Numa previa de uma linha nao ha hierarquia: o
+    `##` que sobra vira o comeco da string, e o Markdown o trata como cabecalho
+    de secao — no `st.caption` isso saia do tamanho de titulo de pagina dentro
+    de uma legenda.
+
+    Os 168 trechos comecam todos com `## N. Titulo`, entao **toda** previa caia
+    nesse caso, nao um caso de borda.
+
+    Corta na ultima palavra inteira: cortar no meio da palavra faz o leitor
+    tentar completa-la.
+    """
+    if not texto:
+        return ""
+    limpo = " ".join(_COMENTARIO_HTML.sub("", texto).split())
+    # `^#{1,6}\s*` nao basta: depois de achatar, o titulo e o corpo viraram uma
+    # linha so, e o `_TITULO_MD` (ancorado em linha) nao casa mais.
+    limpo = re.sub(r"#{1,6}\s+", "", limpo).strip()
+
+    if len(limpo) <= maximo:
+        return limpo
+    return limpo[:maximo].rsplit(" ", 1)[0] + "..."
 
 
 # --- classificacao supervisionada -------------------------------------------
@@ -947,6 +990,56 @@ def r_clf_eventos_consultaveis(tamanho: int | None = None):
 def configurar_pagina(titulo: str, icone: str = "🔧") -> None:
     st.set_page_config(page_title=f"{titulo} — Manutencao Prescritiva",
                        page_icon=icone, layout="wide")
+
+
+# Dentro do balao de conversa, nenhum titulo passa do tamanho do texto corrido.
+#
+# **Por que existe, se `para_exibir` ja rebaixa.** Porque as duas travas pegam
+# coisas diferentes, e a primeira depende de alguem lembrar de chama-la. O texto
+# que chega ao balao vem de tres origens — o manual, a redacao do modelo e o
+# historico — e qualquer uma pode trazer `#`. Sanear na origem e o conserto
+# certo; isto e o teto que vale mesmo quando um caminho novo esquecer o saneamento.
+#
+# Escopo no `stChatMessage` de proposito: `st.header` e `st.title` sao NOSSOS e
+# continuam do tamanho que devem ter. So o conteudo de terceiros e limitado.
+#
+# Se o `data-testid` mudar numa versao futura do Streamlit, a regra deixa de
+# casar e a tela volta ao comportamento de hoje — degrada para o que ja
+# funciona, nao para algo pior.
+_CSS_CHAT = """
+<style>
+[data-testid="stChatMessage"] h1,
+[data-testid="stChatMessage"] h2,
+[data-testid="stChatMessage"] h3,
+[data-testid="stChatMessage"] h4,
+[data-testid="stChatMessage"] h5,
+[data-testid="stChatMessage"] h6 {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: 0.8rem 0 0.3rem;
+    padding: 0;
+    letter-spacing: 0;
+}
+/* O primeiro titulo do balao nao precisa de respiro acima: o balao ja o da. */
+[data-testid="stChatMessage"] h1:first-child,
+[data-testid="stChatMessage"] h2:first-child,
+[data-testid="stChatMessage"] h3:first-child,
+[data-testid="stChatMessage"] h4:first-child,
+[data-testid="stChatMessage"] h5:first-child,
+[data-testid="stChatMessage"] h6:first-child {
+    margin-top: 0;
+}
+</style>
+"""
+
+
+def estilo_do_chat() -> None:
+    """Limita o tamanho dos titulos dentro dos baloes de conversa.
+
+    Chamar uma vez por pagina que tenha chat, logo apos `configurar_pagina`.
+    """
+    st.markdown(_CSS_CHAT, unsafe_allow_html=True)
 
 
 def aviso_csv_ausente(erro: Exception) -> None:

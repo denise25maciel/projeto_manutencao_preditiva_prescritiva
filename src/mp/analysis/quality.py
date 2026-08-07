@@ -238,7 +238,7 @@ def _outliers_bloco(df: pd.DataFrame, colunas: list[str]) -> pd.DataFrame:
 
 
 def relatorio_qualidade(df: pd.DataFrame) -> dict:
-    """Roda todas as checagens de uma vez. Ponto de entrada da UI e do notebook."""
+    """Roda todas as checagens de uma vez. Ponto de entrada da UI."""
     return {
         "constantes": colunas_constantes(df),
         "redundantes": colunas_redundantes(df),
