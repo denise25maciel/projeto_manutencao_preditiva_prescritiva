@@ -1,4 +1,11 @@
-# Manutenção Preditiva e Prescritiva
+# Manutenção Prescritiva em Ativos Rotativos
+Denise do Rocio Maciel
+Case Técnico — Processo Seletivo 02198/2026 FIESC 
+Analista em Pesquisa de Desenvolvimento Tecnológico e Inovação Pleno
+Desenvolvedor Full Stack - Pleno - IA e Python
+>> Repositório principal: https://github.com/denise25maciel/projeto_manutencao_preditiva_prescritiva.git
+>> Repositório segundário (utilizado para aprimorar modelo de ML):https://github.com/denise25maciel/projeto_manutencao_preditiva_prescritiva_classificacao.git
+
 
 Sistema de manutenção prescritiva para máquinas rotativas de chão de fábrica.
 
