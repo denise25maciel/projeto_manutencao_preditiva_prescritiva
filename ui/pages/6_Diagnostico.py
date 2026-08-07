@@ -130,97 +130,21 @@ with aba_diagnostico:
                             "esquentou depois da ultima manutencao...",
                 height=140,
             )
-
-            # ------------------------------------------------------------------
-            # A leitura do sensor, no mesmo formulario
-            # ------------------------------------------------------------------
-            #
-            # Existe uma aba so para o sensor, ao lado, para quem so tem o JSON.
-            # Aqui ele e **complemento da descricao**: o tecnico conta o que ve e,
-            # se tiver o numero, cola junto — que e como a coisa acontece na
-            # pratica, e nao em duas telas separadas.
-            #
-            # Quando vem preenchido, quem decide a familia sao os numeros. Nao e
-            # preferencia: a floresta mede o comportamento do trecho, enquanto a
-            # descricao passa por uma busca semantica que sempre volta com
-            # alguma coisa.
-            with st.expander("📈 Tenho as leituras do sensor (opcional)"):
-                st.caption(
-                    "Cole um **trecho** de leituras em CSV. Com ele preenchido, "
-                    "**quem decide a familia sao os numeros**, e o resultado entra "
-                    "na conversa como a primeira fala. Vazio, o sistema decide "
-                    "pela descricao."
-                )
-
-                c_semente, c_botao = st.columns([1, 2])
-                with c_semente:
-                    semente_txt = st.number_input(
-                        "Sorteio", 0, 9999, 0, step=1, key="txt_semente",
-                        help="Muda qual trecho real do historico e sorteado.",
-                    )
-                with c_botao:
-                    st.markdown("&nbsp;")
-                    if st.button("Preencher com um trecho real do historico",
-                                 key="btn_preencher", width="stretch"):
-                        exemplo_txt = D.r_trecho_de_exemplo(50, int(semente_txt))
-                        st.session_state["sensor_json"] = exemplo_txt[
-                            D.r_clf_colunas(False) + [D.config.COLUNA_ROTULO]
-                        ].to_csv(index=False)
-                        st.rerun()
-
-                st.text_area(
-                    "Leituras do sensor (CSV)",
-                    key="sensor_json",
-                    height=220,
-                    placeholder="z_rms_velocity_mm_s,x_rms_velocity_mm_s,...\n"
-                                "1.09,1.57,...\n1.10,1.56,...",
-                    help="Varias linhas: uma leitura isolada zera quatro das cinco "
-                         "estatisticas. A coluna `fault`, se vier, e a anotacao do "
-                         "operador — sera confrontada, nunca obedecida.",
-                )
+            # O campo de leituras saiu daqui. Quem tem o trecho do sensor usa a
+            # aba ao lado, que e so dele; esta aba voltou a ser o que o nome diz
+            # — descrever o problema em palavras.
 
             if st.button("Procurar o procedimento", type="primary", key="btn_texto"):
-                sensor_txt = (st.session_state.get("sensor_json") or "").strip()
-
-                if not descricao.strip() and not sensor_txt:
-                    st.warning(
-                        "Escreva a descricao do problema, ou cole a leitura do "
-                        "sensor no campo acima."
-                    )
+                if not descricao.strip():
+                    st.warning("Escreva a descricao do problema.")
                     st.stop()
 
-                bloco = None
-                if sensor_txt:
-                    try:
-                        bloco = D.ler_bloco_de_sensor(sensor_txt)
-                    except Exception as e:  # noqa: BLE001 — a mensagem vai para a tela
-                        st.error(f"Nao consegui ler as leituras: {e}")
-                        st.stop()
+                with st.spinner("Procurando nos seis manuais..."):
+                    nova = D.abrir_conversa_por_texto(
+                        descricao, k=8, usar_llm=usar_llm, config_llm=cfg
+                    )
 
-                if bloco is not None:
-                    # --- caminho do sensor -------------------------------------
-                    with st.spinner("Classificando o trecho..."):
-                        clf = D.classificar_trecho(bloco)
-                        nova = D.abrir_conversa(classificacao=clf)
-
-                    # O anuncio entra como FALA, e nao como painel de metricas: o
-                    # tecnico esta lendo uma conversa. Os numeros sao os da
-                    # floresta — o modelo, quando ligado, so os redige, e o G5N
-                    # confere se cada numero escrito foi um numero apurado.
-                    with st.spinner("Escrevendo o que os numeros indicam..."):
-                        D.classificar_na_conversa(
-                            nova, clf, usar_llm=usar_llm, config_llm=cfg
-                        )
-
-                    st.session_state["diagnostico"] = clf
-                else:
-                    # --- caminho por texto -------------------------------------
-                    with st.spinner("Procurando nos seis manuais..."):
-                        nova = D.abrir_conversa_por_texto(
-                            descricao, k=8, usar_llm=usar_llm, config_llm=cfg
-                        )
-                    st.session_state.pop("diagnostico", None)
-
+                st.session_state.pop("diagnostico", None)
                 st.session_state["sessao"] = nova
                 st.rerun()
 

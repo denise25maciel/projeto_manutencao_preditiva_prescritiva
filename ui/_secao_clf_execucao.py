@@ -34,7 +34,6 @@ import _dados as D
 from mp import config
 from mp.classificacao import acerto_por_familia, matriz_de_confusao
 from mp.classificacao.execucao import executar_pipeline, relatorio_texto
-from _secao_clf_modelo import heatmap_confusao
 
 CHAVE_ETAPAS = "clf_exec_etapas"
 CHAVE_CONFIG = "clf_exec_config"
@@ -383,3 +382,39 @@ def _tabela_de_folds(resultado: dict) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(linhas)
+
+
+def heatmap_confusao(confusao: pd.DataFrame) -> alt.Chart:
+    """Matriz de confusao normalizada por linha: o que era x o que o modelo disse.
+
+    Cada linha soma 100%, entao a diagonal e o acerto daquela familia. Somar os
+    folds e legitimo porque cada amostra e testada exatamente uma vez.
+    """
+    longo = (
+        confusao.reset_index(names="verdadeira")
+        .melt(id_vars="verdadeira", var_name="prevista", value_name="fracao")
+    )
+    ordem = list(confusao.index)
+
+    base = alt.Chart(longo).encode(
+        x=alt.X("prevista:N", sort=ordem, title="o modelo disse",
+                axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y("verdadeira:N", sort=ordem, title="era"),
+    )
+
+    celulas = base.mark_rect().encode(
+        color=alt.Color("fracao:Q", title="fracao",
+                        scale=alt.Scale(scheme="blues", domain=[0, 1])),
+        tooltip=["verdadeira", "prevista", alt.Tooltip("fracao:Q", format=".1%")],
+    )
+
+    # So o valor relevante vira texto: a matriz tem 169 celulas e a maioria e
+    # zero, que escrito por extenso vira ruido visual.
+    rotulos = base.mark_text(fontSize=9).encode(
+        text=alt.condition(alt.datum.fracao >= 0.05,
+                           alt.Text("fracao:Q", format=".0%"), alt.value("")),
+        color=alt.condition(alt.datum.fracao > 0.5,
+                            alt.value("white"), alt.value("#333")),
+    )
+
+    return (celulas + rotulos).properties(height=380)

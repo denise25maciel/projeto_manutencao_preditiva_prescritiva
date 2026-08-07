@@ -55,6 +55,7 @@ def ato_2_arquivo_cru() -> None:
     unica pelo mesmo motivo dos outros atos, e com a mesma conversao conferida
     literal por literal.
     """
+    st.header("📄 O arquivo", divider="gray")
     st.caption("O arquivo na ordem em que foi lido. Nada tratado.")
 
     try:
@@ -1287,3 +1288,35 @@ ato_6_documentos()
 
 st.divider()
 
+# ==========================================================================
+# Fecho
+# ==========================================================================
+st.header("Depois desta historia", divider="gray")
+
+st.markdown(
+    """
+Os seis atos acima prepararam as duas fontes: o que a maquina mediu e o que os
+manuais mandam fazer. Quem usa isso sao as duas telas do menu a esquerda.
+
+**Diagnostico** — o fluxo completo, em duas abas:
+
+- **Diagnostico e conversa** — o tecnico descreve o problema ou chega o JSON do
+  sensor, o sistema acha o procedimento e conversa sobre ele, citando documento,
+  secao e pagina
+- **Modelo de linguagem** — escolha do provedor (local ou API), as regras do
+  prompt e o teste de conexao. Fica ali dentro, e nao numa tela separada, porque
+  trocar de modelo no meio de uma conversa nao pode custar sair dela
+
+**Classificacao** — a pergunta anterior a todas as outras: *da para descobrir a
+familia so pelos numeros do sensor, sem ninguem anotar o rotulo?* Em tres abas:
+
+- **Preparacao dos dados** — como uma leitura vira um exemplo que se pode
+  aprender, e por que uma leitura sozinha nao e um
+- **O modelo e o que ele vale** — a floresta, e as duas maneiras de cortar
+  treino e teste que dao 92% e 44% sobre exatamente os mesmos dados. So uma das
+  duas responde *"vai funcionar numa maquina nova?"*
+- **Executar e ver o resultado** — o pipeline rodando de verdade, etapa por
+  etapa e cronometrado, terminando no laudo dos testes. Sem cache: o tempo que
+  a tela mostra e o tempo que levou
+"""
+)
