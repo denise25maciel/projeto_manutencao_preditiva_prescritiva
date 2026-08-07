@@ -1,22 +1,13 @@
-"""O pipeline inteiro executado passo a passo, cronometrado e observavel.
+"""O pipeline inteiro, passo a passo e cronometrado.
 
-Os outros modulos deste pacote sao as pecas; este as roda em ordem e conta o
-que aconteceu em cada uma. Serve ao painel de execucao da interface, e serve
-igualmente no terminal — `python -m mp.classificacao.execucao` imprime o mesmo
-relatorio, sem Streamlit nenhum.
+Os outros modulos sao as pecas; este as roda em ordem e conta o que aconteceu em
+cada uma. Serve ao painel da interface e ao terminal —
+`python -m mp.classificacao.execucao` imprime o mesmo relatorio.
 
-**Por que um modulo, e nao um laco dentro da tela.** A sequencia das etapas e o
-que cada uma produz sao conhecimento do dominio, nao de desenho: quem le o
-codigo deve conseguir saber o que o sistema faz sem abrir um arquivo de
-interface. A tela recebe `Etapa` e desenha; nao decide o que vem depois de que.
-
-**A cronometragem e honesta, e isso custa uma decisao.** As funcoes rodam aqui
-sem passar pelo cache da interface — senao a segunda execucao mostraria tempos
-proximos de zero e o painel viraria enfeite. Executar de novo executa de novo.
-
-Cada etapa entrega tambem uma amostra pequena do que produziu. E o que
-transforma o painel de barra de progresso em prova: da para ver o dado mudando
-de forma entre uma etapa e a seguinte, em vez de acreditar que mudou.
+**A cronometragem e honesta, e isso custa uma decisao:** as funcoes rodam sem
+passar pelo cache da interface, senao a segunda execucao mostraria tempos
+proximos de zero. Cada etapa entrega tambem uma amostra do que produziu — e o
+que transforma o painel de barra de progresso em prova.
 """
 
 from __future__ import annotations

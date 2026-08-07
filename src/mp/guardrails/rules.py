@@ -3,7 +3,7 @@
 | ID | Pergunta | Se falhar |
 |-----|----------|-----------|
 | G0  | O JSON recebido faz sentido? | rejeita a entrada |
-| G1  | Achou vizinhos parecidos o bastante? | "sem ocorrencias similares" |
+| G1  | A floresta tem confianca suficiente? | "sem base para nomear a falha" |
 | G1T | A evidencia aponta UM manual? | mostra a lista, o tecnico escolhe |
 | G2  | E defeito, ou so um estado normal? | encerra o fluxo prescritivo |
 | G3  | Essa familia tem manual? | "sem documentacao" |
@@ -143,33 +143,30 @@ def g0_entrada(evento: dict) -> Veredito:
 # --------------------------------------------------------------------------
 
 
-def g1_similaridade(distancia: float | None, limiar: float | None = None) -> Veredito:
-    """Distancia do vizinho mais proximo contra o limiar.
+def g1_confianca(probabilidade: float | None, minimo: float | None = None) -> Veredito:
+    """A floresta tem certeza suficiente para o fluxo seguir?
 
-    Com `distancia=None` devolve `passou=True` e avisa na mensagem que nao
-    verificou. Guardrail nao implementado deve deixar passar: bloquear tudo
-    esconderia o resto do fluxo e fingiria que a trava funciona.
+    Substituiu a versao que media distancia do kNN. A pergunta e a mesma —
+    *"ha base para afirmar uma familia?"* —, o que mudou e o instrumento.
 
-    O limiar definitivo sai da distribuicao das distancias dentro de cada classe
-    e vai para `config`.
+    Com `probabilidade=None` deixa passar e avisa na mensagem. Guardrail sem
+    entrada deve deixar passar: bloquear tudo esconderia o resto do fluxo e
+    fingiria que a trava funciona.
     """
-    if distancia is None:
-        return Veredito("G1", True,
-                        "Nao verificado — o motor de similaridade e a Parte 3.",
+    from mp.classificacao.consulta import CONFIANCA_MINIMA
+
+    if probabilidade is None:
+        return Veredito("G1", True, "Nao verificado — nenhuma classificacao recebida.",
                         {"implementado": False})
 
-    limiar = limiar if limiar is not None else getattr(config, "LIMIAR_G1", None)
-    if limiar is None:
-        return Veredito("G1", True,
-                        "Nao verificado — limiar ainda nao calibrado.",
-                        {"implementado": False, "distancia": distancia})
-
-    ok = distancia <= limiar
+    minimo = CONFIANCA_MINIMA if minimo is None else minimo
+    ok = probabilidade >= minimo
     return Veredito(
         "G1", ok,
-        "Ha ocorrencias similares no historico." if ok
-        else "Sem ocorrencias similares o bastante no historico.",
-        {"distancia": distancia, "limiar": limiar, "implementado": True},
+        f"A floresta indica a familia com {probabilidade:.0%} de confianca." if ok
+        else f"Confianca de {probabilidade:.0%}, abaixo do minimo de {minimo:.0%} — "
+             "os numeros nao sustentam nomear uma falha.",
+        {"probabilidade": probabilidade, "minimo": minimo, "implementado": True},
     )
 
 
@@ -442,7 +439,7 @@ def g5n_numeros_apurados(resposta: str, fatos: dict) -> Veredito:
 def avaliar(
     evento: dict | None = None,
     rotulo: str | None = None,
-    distancia: float | None = None,
+    confianca: float | None = None,
     trechos=None,
     resposta: str | None = None,
 ) -> list[Veredito]:
@@ -464,7 +461,7 @@ def avaliar(
         if rotulo is None:
             rotulo = evento.get(config.COLUNA_ROTULO)
 
-    v = g1_similaridade(distancia)
+    v = g1_confianca(confianca)
     vereditos.append(v)
     if not v:
         return vereditos

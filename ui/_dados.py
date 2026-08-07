@@ -584,23 +584,68 @@ def responder_prescritivo(pergunta: str, rotulo: str, usar_llm: bool,
 # `st.session_state` da pagina.
 
 
-@st.cache_resource(show_spinner="Montando o indice de similaridade...")
-def indice_knn():
-    """O historico em memoria, pronto para responder por vizinhanca.
+def ler_bloco_de_sensor(texto: str):
+    """Texto colado -> DataFrame com as colunas que o modelo espera.
 
-    `cache_resource` porque e um objeto com estado ajustado (escala + arvore),
-    nao um valor serializavel. Construir leva ~3 s e vale para a sessao toda.
+    Aceita CSV **com** cabecalho (a ordem nao importa) ou **sem**, e nesse caso
+    assume a ordem de `colunas_de_medida`. Exigir a ordem seria pedir que quem
+    cola saiba de cor uma lista de 16 nomes.
     """
-    from mp.ingestion import construir_eventos
-    from mp.similarity import Indice
+    from io import StringIO
 
-    leituras, _ = construir_eventos(dados())
-    return Indice().construir(leituras)
+    import pandas as pd
+
+    from mp.classificacao import colunas_de_medida
+
+    esperadas = colunas_de_medida(dados())
+    texto = (texto or "").strip()
+    if not texto:
+        raise ValueError("Nenhuma leitura colada.")
+
+    bloco = pd.read_csv(StringIO(texto))
+    if not set(esperadas).issubset(bloco.columns):
+        # Sem cabecalho: a primeira linha era dado e virou nome de coluna.
+        bloco = pd.read_csv(StringIO(texto), header=None)
+        if bloco.shape[1] < len(esperadas):
+            raise ValueError(
+                f"Esperava ao menos {len(esperadas)} colunas de medida, vieram "
+                f"{bloco.shape[1]}."
+            )
+        bloco = bloco.iloc[:, : len(esperadas)]
+        bloco.columns = esperadas
+
+    return bloco
 
 
-def diagnosticar(evento: dict, k: int = 25):
-    """O que os numeros dizem sobre este evento. Sem catalogo, sem texto."""
-    return indice_knn().consultar(evento, k=k)
+def classificar_trecho(bloco):
+    """O que a floresta diz sobre um trecho de leituras. Sem catalogo, sem texto.
+
+    Substituiu o `diagnosticar` do kNN. A floresta e o unico modelo do sistema
+    agora, e ela precisa de um **trecho** — uma leitura isolada zera quatro das
+    cinco estatisticas, e zero variacao e a assinatura de `motor_desligado`.
+    """
+    from mp.classificacao import classificar_bloco
+
+    return classificar_bloco(bloco, clf_modelo())
+
+
+@st.cache_data(**CACHE)
+def r_trecho_de_exemplo(n: int = 50, semente: int = 0):
+    """Um trecho real de um evento do historico, pronto para classificar.
+
+    Um evento inteiro, e nao linhas sorteadas: a floresta mede variacao dentro
+    do trecho, e linhas de eventos diferentes dariam uma variacao que nunca
+    existiu.
+    """
+    import numpy as np
+
+    leituras = r_clf_leituras()
+    eventos = leituras.groupby("evento").size()
+    grandes = eventos[eventos >= n].index.tolist()
+    if not grandes:
+        return leituras.head(n)
+    escolhido = grandes[int(np.random.default_rng(semente).integers(0, len(grandes)))]
+    return leituras[leituras["evento"] == escolhido].head(n)
 
 
 @st.cache_data(**CACHE)
@@ -612,7 +657,7 @@ def r_evento_de_exemplo(rotulo: str | None = None, semente: int = 0) -> dict:
     """
     import numpy as np
 
-    from mp.similarity import colunas_de_similaridade
+    from mp.classificacao.colunas import colunas_de_medida
 
     df = dados()
     if rotulo:
@@ -623,18 +668,18 @@ def r_evento_de_exemplo(rotulo: str | None = None, semente: int = 0) -> dict:
     pos = int(np.random.default_rng(semente).integers(0, len(df)))
     linha = df.iloc[pos]
 
-    campos = colunas_de_similaridade(dados()) + ["rpm", "temperature_c"]
+    campos = colunas_de_medida(dados()) + ["rpm", "temperature_c"]
     evento = {c: round(float(linha[c]), 4) for c in campos if c in linha.index}
     evento[config.COLUNA_ROTULO] = str(linha[config.COLUNA_ROTULO])
     return evento
 
 
 def abrir_conversa(evento: dict | None = None, rotulo: str | None = None,
-                   diagnostico=None):
+                   classificacao=None):
     from mp.agente import abrir_sessao
 
     _embedder_aquecido()
-    return abrir_sessao(rotulo=rotulo, evento=evento, diagnostico=diagnostico)
+    return abrir_sessao(rotulo=rotulo, evento=evento, classificacao=classificacao)
 
 
 def _cliente(usar_llm: bool, config_llm: dict | None):
@@ -696,9 +741,9 @@ def _sistema(config_llm: dict | None) -> str | None:
     return texto.strip() or None
 
 
-def classificar_na_conversa(sessao, diagnostico, usar_llm: bool = False,
+def classificar_na_conversa(sessao, classificacao, usar_llm: bool = False,
                             config_llm: dict | None = None):
-    """O que o kNN apurou entra na conversa como fala, antes do manual.
+    """O que a floresta apurou entra na conversa como fala, antes do manual.
 
     **Nao passa `sistema`.** As regras editaveis da tela sao as da resposta
     prescritiva; aplicá-las aqui trocaria as regras da classificacao pelas de
@@ -707,7 +752,7 @@ def classificar_na_conversa(sessao, diagnostico, usar_llm: bool = False,
     """
     from mp.agente import turno_de_classificacao
 
-    return turno_de_classificacao(sessao, diagnostico,
+    return turno_de_classificacao(sessao, classificacao,
                                   cliente=_cliente(usar_llm, config_llm))
 
 

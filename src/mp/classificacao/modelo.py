@@ -1,30 +1,14 @@
 """A floresta que nomeia a familia a partir de um trecho de leituras.
 
-Adaptacao do `sistema.py` do projeto de classificacao. O modelo e o mesmo —
-`RandomForestClassifier` com 400 arvores — e a escolha continua se justificando
-pelos mesmos tres motivos: nao exige padronizar escala, aguenta classe com
-poucos exemplos, e sabe dizer em que se baseou.
+`RandomForestClassifier` com 400 arvores. Escolhida por tres motivos: nao exige
+padronizar escala, aguenta classe com poucos exemplos, e sabe dizer em que se
+baseou.
 
-**Onde este modulo entra no sistema, e onde nao entra.**
-
-Ele nao substitui o motor de similaridade da Parte 3, e a diferenca nao e de
-qualidade — e de pergunta respondida. O kNN responde *"a quais ensaios do
-historico este evento se parece"*, e devolve os vizinhos, que sao a evidencia
-que o tecnico confere. A floresta responde *"que familia e esta"*, e devolve um
-nome com uma probabilidade, sem mostrar de onde veio.
-
-Por isso o lugar dele e o que o GUIA.md ja reservou em `[R2]`: **sinal auxiliar
-de confianca**. Quando a floresta concorda com o kNN, ha duas leituras
-independentes apontando a mesma familia. Quando discordam, e alerta — e nao ha
-criterio para decidir qual das duas tem razao, o que e exatamente o motivo de
-isso ir para a tela e nao para dentro de um `if`.
-
-**O que ele nao faz, por decisao.** Nao escolhe manual, nao decide se prescreve
-e nao entra no caminho do LLM. A familia que autoriza o manual continua saindo
-do `fault_map.yaml` pelo rotulo — principio 1 — e os guardrails continuam sendo
-`SELECT` e comparacao numerica. Um classificador de 44% de acuracia honesta
-(medido, ver `validacao.py`) nao tem autoridade para fixar o manual de uma
-conversa inteira.
+**O que ela decide, e o que nao decide.** Ela nomeia a familia que abre a
+conversa — mas nao escolhe manual e nao entra no caminho do modelo de linguagem.
+Quem autoriza a prescricao continua sendo o `fault_map.yaml`, por `SELECT`. Com
+44% de acuracia honesta (ver `validacao`), o veredito dela passa antes pelo
+**G1**, que barra confianca baixa.
 """
 
 from __future__ import annotations
@@ -90,14 +74,10 @@ class Classificador:
     def ajustar(self, tabela: pd.DataFrame) -> "Classificador":
         """Ajusta a floresta a uma tabela de amostras **ja montada**.
 
-        `treinar` e a composicao completa; este e o ultimo passo dela, separado
-        para quem ja tem as amostras em maos. Existe por causa do painel de
-        execucao, que cronometra cada etapa: se o treino remontasse as amostras
-        por dentro, o tempo medido nele incluiria o das etapas anteriores e a
-        conta nao fecharia com o total.
-
-        Aceita a tabela sem `attrs` — o cache do Streamlit costuma perde-los —,
-        e nesse caso reconstroi os nomes a partir da largura da matriz.
+        `treinar` e a composicao completa; este e o ultimo passo dela. Existe
+        separado por causa do painel de execucao, que cronometra cada etapa: se
+        o treino remontasse as amostras por dentro, o tempo dele incluiria o das
+        etapas anteriores.
         """
         if tabela.empty:
             raise ValueError(
@@ -146,10 +126,9 @@ class Classificador:
     def consultar(self, trecho: pd.DataFrame) -> pd.DataFrame:
         """Ranking de familias para um trecho de leituras.
 
-        Quando o trecho da mais de uma janela, as probabilidades sao a media
-        entre elas — nao o voto da maioria. A media preserva a duvida: cinco
-        janelas empatando entre duas familias devolve 50/50, enquanto o voto
-        devolveria a vencedora com cara de certeza.
+        Varias janelas votam por **media de probabilidade**, nao por maioria: a
+        media preserva a duvida, enquanto o voto devolveria a vencedora com cara
+        de certeza.
         """
         if self.classes_ is None:
             raise RuntimeError("O modelo ainda nao foi treinado.")
@@ -223,13 +202,9 @@ def prever_evento_segurado(
     """Treina **sem** um evento e depois pergunta a ele. Um caso, honesto.
 
     Existe para a demonstracao na tela. Perguntar a um modelo treinado no
-    conjunto inteiro sobre um evento que estava nesse conjunto nao demonstra
-    nada — ele reconhece o que decorou, e a tela mostraria uma certeza que a
-    validacao ja provou nao existir. Aqui o evento inteiro fica de fora do
-    treino, que e o mesmo criterio da estrategia `por_evento`.
-
-    Recebe as leituras ja preparadas (`amostras.preparar`), e nao o CSV cru,
-    porque quem chama normalmente ja as tem em maos.
+    conjunto inteiro sobre um evento que estava nele nao demonstra nada — ele
+    reconhece o que decorou. Aqui o evento fica de fora do treino, que e o mesmo
+    criterio da estrategia `por_evento`.
     """
     tamanho = tamanho or config.CLF_JANELA_TAMANHO
     n_arvores = n_arvores or config.CLF_N_ARVORES

@@ -143,7 +143,7 @@ def responder(
     # --- G1: ha ocorrencias parecidas? -------------------------------------
     # Ainda um stub: a Parte 3 e quem produz a distancia. Fica no fluxo para
     # que a ordem esteja certa quando ela chegar.
-    v = g.g1_similaridade(None)
+    v = g.g1_confianca(None)
     p.vereditos.append(v)
 
     # --- G2 e G3: catalogo, nao similaridade -------------------------------

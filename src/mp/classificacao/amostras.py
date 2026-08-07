@@ -1,54 +1,20 @@
 """De leitura crua para a linha que o classificador enxerga.
 
-Este modulo e a adaptacao do `prep.py` do projeto de classificacao. A ideia
-central vem de la e nao muda: **uma amostra nao e uma leitura**. Uma leitura
-isolada de vibracao nao descreve um defeito — o que descreve e como um trecho
-de leituras se comporta. Entao um bloco de leituras consecutivas vira uma linha
-so, resumida em poucos numeros por coluna.
+**Uma leitura nao e um exemplo.** "A vibracao neste instante foi 3,2 mm/s" nao
+descreve defeito nenhum; o que descreve e como um *trecho* se comporta. Entao um
+bloco de leituras vira uma linha so, resumida em 5 numeros por coluna.
 
-Tres coisas do original foram trocadas por peca equivalente deste projeto, e o
-motivo de cada troca esta abaixo. Sao trocas de **fonte da decisao**, nao de
-algoritmo: o resumo estatistico e o mesmo, o modelo e o mesmo.
+Adaptado do `prep.py` do projeto irmao. O algoritmo e o mesmo — o que trocou foi
+a **fonte de cada decisao**, para nao existir uma segunda resposta a perguntas
+que este projeto ja responde:
 
-**1. O rotulo vem do `fault_map.yaml`, nao de regras no codigo.**
-O original normalizava o rotulo numa funcao `classe_base()` com uma lista de
-typos (`desabalanceado` -> `desbalanceado`), uma lista de prefixos e uma lista
-de radicais, tudo escrito em Python. Aqui isso ja existe, curado a mao e
-versionado, e e o principio 1 do GUIA.md: o rotulo resolve para familia por
-`catalog.familia_de`, que e um lookup exato no YAML. Duas fontes de verdade
-para a mesma pergunta seria a pior das opcoes — a que o resto do sistema usa
-para achar o manual teria de concordar com a que o modelo usa para aprender, e
-nada garantiria isso.
+    o rotulo    regras no codigo        ->  data/fault_map.yaml
+    o grupo     troca do texto `fault`  ->  o evento (`fault` + `rpm`)
+    as colunas  lista propria           ->  `colunas.colunas_de_medida`
 
-Consequencia pratica: o catalogo cobre os 151 rotulos observados, entao nenhuma
-leitura e descartada por rotulo desconhecido. O original descartava `teste`,
-`acelerando` e `new_tes`; aqui eles viram familias com `is_problem: false` e
-quem decide se entram e o parametro `so_defeitos`.
-
-**2. O grupo e o evento (`fault` + `rpm`), nao a troca de rotulo.**
-O original abria um segmento novo quando o texto de `fault` mudava ou quando
-havia mais de uma hora de pausa. E exatamente a regra que este projeto testou e
-**rejeitou** na Parte 1: a bancada rodava 500, 1000 e 2000 rpm em sequencia sem
-trocar o nome da falha, e 136 dos 205 grupos assim formados misturavam rotacoes
-— num caso a velocidade RMS ia de 3,5 a 21,1 dentro do "mesmo" grupo. Aqui o
-grupo e o evento de `ingestion.construir_eventos`, que quebra tambem no `rpm`.
-
-Isso importa **duas** vezes. Na hora de resumir, porque a mediana de um bloco
-que mistura tres regimes nao descreve nenhum dos tres. E na hora de validar,
-porque o grupo e o que a validacao por grupo segura fora do treino: grupo mal
-formado deixa metade de um ensaio no treino e a outra metade no teste, que e o
-vazamento que a validacao por grupo existe para impedir.
-
-**3. As colunas sao as da similaridade, e o regime fica de fora por padrao.**
-O original usava 18 colunas, incluindo `rpm` e `temperature_c`, e depois listou
-como limitacao numero 1 que "o modelo aprendeu o ensaio, nao o defeito — a
-temperatura ambiente do dia, a rotacao exata". Aqui as colunas vem de
-`similarity.features.colunas_de_similaridade`, que ja separa medida fisica de
-regime de operacao pelo mesmo motivo, e `incluir_regime` liga e desliga isso
-para a diferenca poder ser medida em vez de suposta.
-
-O que **nao** mudou: as cinco estatisticas por coluna, o tamanho de janela com
-50% de sobreposicao, e o formato da matriz final.
+O grupo importa duas vezes: ao **resumir**, porque a mediana de um bloco que
+mistura tres rotacoes nao descreve nenhuma; e ao **validar**, porque grupo mal
+formado deixa metade de um ensaio no treino e a outra no teste.
 """
 
 from __future__ import annotations
@@ -59,7 +25,7 @@ import pandas as pd
 from mp import config
 from mp.ingestion import construir_eventos
 from mp.retrieval.catalog import familia_de, is_problem
-from mp.similarity.features import colunas_de_similaridade
+from mp.classificacao.colunas import colunas_de_medida
 
 __all__ = [
     "ESTATISTICAS",
@@ -96,15 +62,12 @@ COLUNA_GRUPO = "evento"
 def preparar(df: pd.DataFrame, so_defeitos: bool = False) -> pd.DataFrame:
     """Ordena no tempo, marca o evento de cada leitura e resolve a familia.
 
-    Devolve as leituras com duas colunas a mais: `evento` (o grupo) e `familia`
-    (a classe a prever). Nenhuma leitura e removida, exceto as de rotulo fora do
-    catalogo — que hoje sao zero, porque o `fault_map.yaml` cobre os 151 rotulos
-    observados.
+    Devolve as leituras com `evento` (o grupo) e `familia` (a classe). So sai a
+    leitura de rotulo fora do catalogo — hoje, nenhuma.
 
-    Com `so_defeitos=True` ficam de fora as familias de `is_problem: false`
-    (normal, teste, acelerando, motor desligado). E o recorte que responde "que
-    defeito e este?"; o padrao responde "em que estado a maquina esta?", que
-    inclui reconhecer que ela esta bem.
+    `so_defeitos=True` tira as familias de `is_problem: false` (normal, teste,
+    motor desligado). O padrao as mantem: reconhecer que a maquina esta **bem**
+    e uma resposta util.
     """
     leituras, _ = construir_eventos(df)
 
@@ -130,7 +93,7 @@ def colunas_de_entrada(df: pd.DataFrame, incluir_regime: bool = False) -> list[s
     coluna mudar la, muda aqui junto — e o principio 5 do GUIA.md aplicado entre
     dois consumidores da mesma decisao.
     """
-    return colunas_de_similaridade(df, incluir_regime=incluir_regime)
+    return colunas_de_medida(df, incluir_regime=incluir_regime)
 
 
 def nomes_das_features(colunas: list[str]) -> list[str]:
@@ -143,12 +106,11 @@ def nomes_das_features(colunas: list[str]) -> list[str]:
 
 
 def resumir_bloco(bloco: pd.DataFrame | np.ndarray, colunas: list[str] | None = None) -> np.ndarray:
-    """Um trecho de leituras vira um vetor de `5 x len(colunas)` numeros.
+    """Um trecho vira um vetor de `5 x len(colunas)` numeros.
 
-    Aceita tambem a matriz numpy ja recortada. Nao e microotimizacao: recortar
-    um DataFrame milhares de vezes reconstroi indice e blocos a cada fatia, e
-    isso sozinho respondia por quase todo o tempo de montar o conjunto. Quem
-    monta em lote converte o evento uma vez e fatia o array.
+    Aceita DataFrame ou a matriz numpy ja recortada. A segunda forma existe por
+    desempenho: fatiar um DataFrame milhares de vezes reconstroi indice e blocos
+    a cada corte, e isso sozinho dominava o tempo de montar o conjunto.
     """
     if isinstance(bloco, pd.DataFrame):
         valores = bloco[colunas].to_numpy(dtype="float64")
@@ -251,20 +213,13 @@ def criar_amostras(
 ) -> pd.DataFrame:
     """Monta a tabela de amostras a partir das leituras ja preparadas.
 
-    Duas formas de recortar, e a escolha muda o que o numero final significa:
+    - `"janela"` — blocos de `tamanho` leituras dentro do mesmo evento, andando
+      de `passo` em `passo`. Evento curto demais e **descartado inteiro**.
+    - `"evento"` — o evento inteiro vira uma amostra. Nada e descartado, mas a
+      validacao por grupo perde o sentido: cada grupo passa a ter uma amostra.
 
-    - `"janela"` — blocos de `tamanho` leituras consecutivas dentro do mesmo
-      evento, andando de `passo` em `passo`. Da muitas amostras, e o evento
-      curto demais para caber uma janela e **descartado inteiro**.
-    - `"evento"` — o evento inteiro vira uma amostra. Nada e descartado, mas as
-      amostras sao poucas e a validacao por grupo perde o sentido, porque cada
-      grupo passa a ter uma amostra so.
-
-    O padrao e `"janela"`: e o unico modo em que a diferenca entre as duas
+    O padrao e `"janela"` — e o unico modo em que a diferenca entre as duas
     estrategias de validacao aparece, e essa diferenca e o achado do projeto.
-
-    Devolve uma linha por amostra, com `features` (o vetor), `familia` (a
-    classe), `evento` (o grupo) e `n_leituras`.
     """
     modo = str(modo).lower()
     if modo not in {"janela", "evento"}:
@@ -329,12 +284,11 @@ def matriz(amostras: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def cobertura_dos_eventos(
     leituras: pd.DataFrame, tamanho: int | None = None
 ) -> pd.DataFrame:
-    """Quais eventos a janela aproveita e quais ela joga fora, por familia.
+    """Quais eventos a janela aproveita e quais joga fora, por familia.
 
-    O descarte e o preco escondido da janela: ele nao aparece na acuracia, mas
-    decide QUAIS defeitos o modelo tem chance de aprender. Uma familia cujos
-    eventos sao todos curtos some do conjunto de treino sem aviso, e o modelo
-    passa a ser incapaz de nomea-la — sem que nenhuma metrica caia por isso.
+    O descarte e o preco escondido da janela: nao aparece na acuracia, mas
+    decide **quais defeitos o modelo tem chance de aprender**. Familia cujos
+    eventos sao todos curtos some do conjunto sem nenhuma metrica cair.
     """
     tamanho = tamanho or config.CLF_JANELA_TAMANHO
 

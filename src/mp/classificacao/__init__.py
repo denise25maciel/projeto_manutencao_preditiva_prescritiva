@@ -1,23 +1,17 @@
 """Classificacao supervisionada da familia a partir de um trecho de leituras.
 
-Vem do projeto irmao de classificacao (`prep.py`, `sistema.py`, `avaliacao.py`),
-adaptado para usar as pecas deste aqui: o rotulo sai do `fault_map.yaml`, o
-grupo e o evento de `ingestion.construir_eventos`, e as colunas sao as mesmas
-que o motor de similaridade compara.
+Vem do projeto irmao (`prep.py`, `sistema.py`, `avaliacao.py`), adaptado para
+usar as pecas deste: o rotulo sai do `fault_map.yaml` e o grupo e o evento.
 
-- `amostras`  — de leitura crua para a matriz (o que era `prep.py`)
-- `modelo`    — a floresta e a consulta (o que era `sistema.py`)
-- `validacao` — as duas estrategias de corte (o que era `avaliacao.py`)
-- `execucao`  — os tres acima rodando em ordem, cronometrados, com relatorio
+- `colunas`   — quais medidas entram, e por que as outras saem
+- `amostras`  — de leitura crua para a matriz
+- `modelo`    — a floresta e a consulta
+- `consulta`  — o veredito sobre um trecho novo, para a conversa
+- `validacao` — as duas estrategias de corte
+- `execucao`  — os anteriores rodando em ordem, cronometrados
 
-`execucao` **nao** e reexportado aqui de proposito: ele importa este pacote, e
-puxa-lo de volta para o `__init__` fecharia um ciclo de import. Quem precisa
-dele escreve `from mp.classificacao.execucao import executar_pipeline`, ou roda
-`python -m mp.classificacao.execucao` para ver o relatorio no terminal.
-
-Papel no sistema: **sinal auxiliar**, o `[R2]` que o GUIA.md previu. Nao decide
-manual, nao entra no caminho do LLM, nao substitui guardrail. A familia que
-autoriza a prescricao continua vindo do rotulo pelo catalogo.
+`execucao` **nao** e reexportado: ele importa este pacote, e puxa-lo de volta
+fecharia um ciclo. Use `from mp.classificacao.execucao import ...`.
 """
 
 from mp.classificacao.amostras import (
@@ -32,6 +26,8 @@ from mp.classificacao.amostras import (
     resumir_bloco,
     tabela_de_estatisticas,
 )
+from mp.classificacao.colunas import colunas_de_medida
+from mp.classificacao.consulta import Classificacao, classificar_bloco
 from mp.classificacao.modelo import Classificador, prever_evento_segurado, treinar
 from mp.classificacao.validacao import (
     ESTRATEGIAS,
@@ -47,7 +43,10 @@ from mp.classificacao.validacao import (
 __all__ = [
     "ESTATISTICAS",
     "ESTRATEGIAS",
+    "Classificacao",
     "Classificador",
+    "classificar_bloco",
+    "colunas_de_medida",
     "acerto_por_familia",
     "cobertura_dos_eventos",
     "colunas_de_entrada",

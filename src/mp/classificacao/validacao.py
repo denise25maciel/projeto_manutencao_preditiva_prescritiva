@@ -1,29 +1,16 @@
-"""As duas maneiras de dividir treino e teste — e por que elas discordam tanto.
+"""As duas maneiras de dividir treino e teste — e por que discordam tanto.
 
-Adaptacao do `avaliacao.py` do projeto de classificacao. O achado central vem
-de la e se sustenta aqui: **a mesma floresta, sobre os mesmos dados, tira nota
-muito diferente conforme a forma de cortar o conjunto de teste**, e so uma das
-duas notas responde a pergunta que interessa.
+    aleatoria    embaralha as amostras e reparte em 5 partes
+    por_evento   reparte EVENTOS inteiros; nenhum fica dos dois lados
 
-    aleatoria      embaralha as amostras e reparte em 5 partes
-    por_evento     reparte EVENTOS inteiros; nenhum evento fica dos dois lados
+A primeira infla. Duas janelas do mesmo evento sao quase identicas — mesma
+bancada, mesma montagem, e metade do conteudo repetido pela sobreposicao —,
+entao ao embaralhar uma cai no treino e a outra no teste, e o modelo reencontra
+na prova o que estudou.
 
-A primeira infla. Duas janelas do mesmo evento sao quase a mesma coisa — mesma
-bancada, mesma montagem, mesma rotacao, minutos de diferenca, e ainda metade do
-conteudo repetido por causa da sobreposicao. Ao embaralhar, uma delas cai no
-treino e a outra no teste, e o modelo reencontra na prova o que estudou. A nota
-sobe sem que nada tenha sido aprendido sobre vibracao.
-
-A segunda e a honesta, e e a que o GUIA.md ja exigia na Parte 3: *"validacao
-por grupo: segurar a sessao inteira fora; leave-one-out ingenuo infla a
-acuracia por autocorrelacao temporal"*. Este modulo e onde essa exigencia vira
-numero — a distancia entre as duas notas **mede** o tamanho da autocorrelacao,
-em vez de so afirmar que ela existe.
-
-**A diferenca so aparece no modo `janela`.** No modo `evento` cada grupo tem uma
-amostra so, e as duas estrategias viram a mesma coisa. Isso nao e defeito da
-medicao: e o mesmo fenomeno visto de outro angulo — sem varias amostras por
-evento, nao ha o que vazar.
+**A distancia entre as duas notas mede o tamanho do problema**, em vez de so
+afirmar que ele existe. So aparece no modo `janela`: no modo `evento` cada grupo
+tem uma amostra so, e nao ha o que vazar.
 """
 
 from __future__ import annotations
@@ -84,16 +71,14 @@ def validar(
     n_folds: int | None = None,
     semente: int | None = None,
 ) -> dict:
-    """Roda as duas estrategias sobre as mesmas amostras e devolve tudo.
+    """Roda as duas estrategias sobre as mesmas amostras.
 
-    Devolve, por estrategia: a acuracia media, o desvio entre os folds, o F1
-    macro e o detalhe de cada fold, com `y_true`/`y_pred` guardados para a
-    matriz de confusao poder ser montada depois sem retreinar.
+    Devolve, por estrategia: acuracia media, desvio entre folds, F1 macro e o
+    detalhe de cada fold — com `y_true`/`y_pred` guardados, para a matriz de
+    confusao sair depois sem retreinar.
 
-    O F1 macro vem junto da acuracia de proposito. A acuracia e dominada pelas
-    familias com muitas amostras; o F1 macro da o mesmo peso a cada familia, e a
-    distancia entre os dois diz se o acerto esta concentrado nas familias
-    grandes.
+    O F1 macro vem junto porque a acuracia e dominada pelas familias grandes; a
+    distancia entre os dois diz se o acerto esta concentrado nelas.
     """
     n_arvores = n_arvores or config.CLF_N_ARVORES
     n_folds = n_folds or config.CLF_N_FOLDS
@@ -185,18 +170,11 @@ def dividir_treino_teste(
 ) -> dict:
     """Um corte unico em treino e teste, para a base poder ser vista e baixada.
 
-    A validacao cruzada faz este corte cinco vezes e joga fora as tabelas
-    intermediarias — o que e certo para medir e inutil para conferir. Aqui o
-    corte e feito uma vez e as duas bases ficam de pe, com a mesma regra:
-    `por_evento=True` sorteia **eventos inteiros**, e nao janelas soltas.
+    `por_evento=True` sorteia **eventos inteiros**. `eventos_vazados` audita o
+    proprio corte: com `True` tem de ser zero.
 
-    Devolve tambem `eventos_vazados`, que e a auditoria do proprio corte. Com
-    `por_evento=True` ele tem de ser zero; com `False`, ele mostra o tamanho do
-    problema que a estrategia aleatoria cria. O numero e contado, nao assumido.
-
-    **Nao e daqui que sai a acuracia.** Um corte unico depende do sorteio: uma
-    semente diferente da outro numero. Quem mede e `validar`, que repete e tira
-    a media. Esta funcao existe para mostrar a base, nao para avalia-la.
+    **Nao e daqui que sai a acuracia** — um corte unico depende do sorteio. Quem
+    mede e `validar`, que repete e tira a media.
     """
     semente = config.CLF_SEMENTE if semente is None else semente
     X, y, grupos = A.matriz(amostras)
@@ -247,12 +225,11 @@ def dividir_treino_teste(
 
 
 def linha_de_base(y: np.ndarray) -> dict:
-    """Com o que a acuracia tem de ser comparada para significar alguma coisa.
+    """Com o que a acuracia tem de ser comparada para significar algo.
 
-    Duas referencias, porque uma so engana. Chutar uniformemente acerta `1/n`;
-    responder sempre a familia mais comum acerta a fatia dela — e essa segunda e
-    sempre maior, entao e a barra de verdade. Um modelo que nao passa dela nao
-    aprendeu nada, por mais que `1/n` faca o numero parecer bom.
+    Duas referencias, porque uma so engana. Chutar acerta `1/n`; responder
+    sempre a familia mais comum acerta a fatia dela — e essa e sempre maior,
+    entao e a barra de verdade.
     """
     contagem = pd.Series(y).value_counts()
     return {
@@ -282,11 +259,11 @@ def matriz_de_confusao(resultado_estrategia: dict, normalizar: bool = True) -> p
 
 
 def acerto_por_familia(resultado_estrategia: dict) -> pd.DataFrame:
-    """Quanto o modelo acerta em cada familia, e quantas amostras ela tem.
+    """Quanto o modelo acerta em cada familia, e com quem a confunde.
 
-    A acuracia global esconde isto: um modelo pode ir bem na media e nunca
-    acertar a familia rara. A coluna `n_amostras` fica ao lado de proposito —
-    acerto de 100% em 6 amostras nao e o mesmo que 100% em 600.
+    A acuracia global esconde isto: pode ir bem na media e nunca acertar a
+    familia rara. `n_amostras` fica ao lado de proposito — 100% em 6 amostras
+    nao e 100% em 600.
     """
     y_true = np.concatenate([f["y_true"] for f in resultado_estrategia["folds"]])
     y_pred = np.concatenate([f["y_pred"] for f in resultado_estrategia["folds"]])
@@ -323,12 +300,11 @@ def experimento_janela(
     n_arvores: int | None = None,
     n_folds: int | None = None,
 ) -> pd.DataFrame:
-    """Roda a validacao para varios tamanhos de janela e devolve a comparacao.
+    """Valida varios tamanhos de janela e devolve a comparacao.
 
-    O que a tabela responde nao e so "qual o melhor tamanho". As duas colunas
-    que mais importam sao a acuracia honesta e a fatia de eventos descartados:
-    a primeira costuma variar pouco, a segunda dispara, e e a segunda que decide
-    quais familias sobram no conjunto.
+    As duas colunas que importam sao a acuracia honesta e a fatia de eventos
+    descartados: a primeira costuma variar pouco, a segunda dispara — e e a
+    segunda que decide quais familias sobram no conjunto.
     """
     tamanhos = tamanhos or config.CLF_JANELAS_TESTADAS
     linhas = []
@@ -381,17 +357,11 @@ def experimento_regime(
     n_arvores: int | None = None,
     n_folds: int | None = None,
 ) -> pd.DataFrame:
-    """Mede o preco de deixar `rpm` e `temperature_c` entrarem como feature.
+    """Mede o preco de deixar `rpm` e temperatura entrarem como feature.
 
-    O projeto de classificacao usava as duas e depois apontou como limitacao
-    numero 1 que o modelo tinha aprendido "a temperatura ambiente do dia, a
-    rotacao exata". Aqui elas ficam de fora por padrao pelo mesmo motivo que o
-    kNN as deixa de fora (`similarity.features`): sao regime de operacao, nao
-    sintoma de defeito.
-
-    Este experimento mede a suposicao em vez de repeti-la. O sinal a procurar e
-    a acuracia **inflada** subir muito mais que a honesta ao incluir o regime:
-    seria a marca de uma feature que ajuda a reconhecer o ensaio, e nao a falha.
+    O sinal a procurar nao e a acuracia honesta subir: e a **inflacao** crescer.
+    Feature que ajuda a reconhecer o ensaio, e nao a falha, aparece assim —
+    melhora a nota falsa sem melhorar a verdadeira.
     """
     tamanho = tamanho or config.CLF_JANELA_TAMANHO
     linhas = []

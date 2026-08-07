@@ -18,7 +18,7 @@ decisão das equipes técnicas.
 | 0 | Módulo de análise exploratória | ✅ concluída |
 | 1 | Eventos e `fault_map.yaml` | ✅ concluída |
 | 2 | Banco SQLite via SQLAlchemy | ✅ concluída |
-| 3 | Motor de similaridade (kNN) | ✅ concluída |
+| 3 | ~~Motor de similaridade (kNN)~~ — **removido** | ➖ |
 | 4 | RAG e guardrails | ✅ concluída |
 | 5 | O agente: grafo, multi-turno, cliente plugável | ✅ concluída |
 | — | Classificação supervisionada (Random Forest) | ✅ concluída |
@@ -86,8 +86,8 @@ pip install -r requirements.txt
 
 O `requirements.txt` cobre o que a Parte 0 precisa: pandas, numpy, pyarrow,
 streamlit, altair, pyyaml e scikit-learn.
-O `scikit-learn` deixou de ser opcional: a interface não abre sem ele — o motor
-de similaridade e a tela de Classificação dependem dos dois. As bibliotecas que
+O `scikit-learn` deixou de ser opcional: a interface não abre sem ele — a
+floresta de classificação depende dele. As bibliotecas que
 ainda faltam (FastAPI, `sentence-transformers`) estão listadas em comentário no
 fim do arquivo e mapeadas como extras no `pyproject.toml`.
 
@@ -138,33 +138,30 @@ Com o venv ativo, a partir da **raiz do projeto**:
 ### Interface Streamlit
 
 ```bash
-streamlit run ui/app.py
+streamlit run ui/Contextualizacao.py
 ```
 
-Abre em `http://localhost:8501`. A **página inicial é uma sequência única**, em
-seis atos — separada em telas, cada uma responderia um pedaço e caberia a quem
-lesse costurar a ordem, e a ordem é justamente o argumento:
+Abre em `http://localhost:8501`. A **Contextualização** é a página inicial: uma
+sequência única, do geral ao específico, em quatro blocos.
 
-| Ato | O que responde |
+| Bloco | O que responde |
 |---|---|
-| **1. O que chegou** | Números de cabeçalho e os três achados que contrariam a suposição inicial |
-| **2. O arquivo cru** | A série sem ordenar, agrupar nem reamostrar — o único ato que não corrige nada |
-| **3. Dá para confiar?** | Nulos por coluna, cadência de coleta, colunas constantes e redundantes, duplicatas e outliers |
-| **4. O que os dados dizem** | Assinatura de vibração por rótulo com quartis e CV, o que distingue cada falha, série temporal por coluna e outliers dentro da classe |
-| **5. Quantas vezes aconteceu** | As 166.796 linhas agrupadas em ocorrências contáveis, com as 5 validações do agrupamento e o custo da regra escolhida |
-| **6. O que fazer a respeito** | Os 6 procedimentos convertidos em Markdown, a matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
+| **1. Os dados gerais** | Quanto dado, de quando, em que ritmo. O arquivo cru, sem tratamento, e os números que provam que ele não está em ordem de data |
+| **2. As colunas** | O que cada medida é: quantos valores distintos tem, quais duas medem a mesma grandeza em unidades diferentes, onde há valor fora do normal, quais podem sair |
+| **3. As falhas** | Que defeitos existem, como cada um se comporta, e quantas vezes cada um aconteceu de verdade — as 166.796 linhas viram ocorrências contáveis |
+| **4. Os documentos** | Os 6 procedimentos convertidos em Markdown, a matriz de campo × arquivo com as pendências, e o diagrama ligando cada procedimento às famílias de `fault` |
 
-A ordem carrega o argumento: o ato 2 mostra o arquivo antes de qualquer correção,
-e o ato 3 vem antes do 4 porque ler a assinatura de uma falha sem saber que o
-arquivo tem leituras repetidas é ler número sem saber a margem dele. Os atos 5 e
-6 preparam as **duas fontes** que o sistema cruza — e elas só se encontram pela
-coluna `fault`, nunca por semelhança entre número e texto.
+A ordem carrega o argumento. Primeiro o **arquivo** — quanto veio, de quando, se
+dá para confiar no horário. Depois as **colunas**, porque não dá para ler a
+assinatura de uma falha sem saber que duas delas medem a mesma coisa. Só então as
+**falhas**. E por fim os **documentos**, que são a outra fonte — e as duas só se
+encontram pela coluna `fault`, nunca por semelhança entre número e texto.
 
 No menu lateral fica a tela que **usa** isso — o **Diagnóstico**, em duas abas:
 
 | Aba | O que faz |
 |---|---|
-| **Diagnóstico e conversa** | O fluxo completo: o técnico descreve o problema e, se tiver, cola a leitura do sensor no mesmo formulário. Com a leitura, a **classificação entra na conversa como a primeira fala** — os números do kNN, redigidos pelo modelo e conferidos pelo G5N. Depois vem o procedimento, citando documento, seção e página |
+| **Diagnóstico e conversa** | O fluxo completo: o técnico descreve o problema e, se tiver, cola um **trecho** de leituras do sensor em CSV no mesmo formulário. Com o trecho, a **classificação entra na conversa como a primeira fala** — os números da floresta, redigidos pelo modelo e conferidos pelo G5N. Depois vem o procedimento, citando documento, seção e página |
 | **Modelo de linguagem** | Quais provedores estão disponíveis, a configuração, as regras do prompt e o teste de conexão — com uma conversa livre, sem guardrail nenhum, de propósito, para servir de contraste |
 
 A configuração era uma tela separada e virou aba (`ui/_secao_modelo.py`): trocar
@@ -193,12 +190,13 @@ Ela vem de um repositório irmão de classificação, sobre os mesmos dados, e f
 **adaptada, não copiada**: o algoritmo veio inteiro, mas cada *decisão* passou a
 sair de onde este projeto já a tomava — o rótulo do `fault_map.yaml` em vez de
 regras no código, o grupo do evento (`fault` + `rpm`) em vez da troca de rótulo,
-e as colunas da mesma função que o kNN usa. O detalhe está em
+e as colunas de um lugar só, `classificacao/colunas.py`. O detalhe está em
 `src/mp/classificacao/`.
 
-Cada ato mora num `ui/_secao_*.py` com uma função `render()`. Módulos fora de
-`ui/pages/` não viram item de menu — é assim que a sequência fica única sem
-duplicar código.
+Os quatro blocos moravam em cinco `ui/_secao_*.py`; hoje são funções dentro do
+próprio `ui/Contextualizacao.py`. Continuam funções, e não código solto no nível
+do módulo, porque `filtro`, `colunas` e `total` são nomes que quase todos usam —
+no mesmo escopo, colidiriam em silêncio.
 
 Na primeira visita, no **ato 6**, clique em **Converter PDFs** para gerar os
 `.md` a partir de `data/raw/*.pdf`. Eles são escritos em
@@ -276,9 +274,9 @@ isso que remover a interface inteira não quebraria o pipeline: a API e
 │   ├── classificacao/        # amostras, modelo (RandomForest), validacao
 │   └── retrieval/            # catalog: leitura do fault_map.yaml
 ├── ui/
-│   ├── app.py                # entrypoint e narrativa única: streamlit run ui/app.py
+│   ├── Contextualizacao.py   # entrypoint: a narrativa dos dados, em 4 blocos
 │   ├── _dados.py             # ponte cacheada UI -> mp.analysis
-│   ├── _secao_*.py           # blocos com render(): os atos e o form do modelo
+│   ├── _secao_*.py           # blocos com render(): o modelo e a classificação
 │   └── pages/                # só o que é tela de verdade: diagnóstico, classificação
 ├── requirements.txt          # instalação do ambiente
 └── pyproject.toml            # metadados + extras das partes seguintes
@@ -333,7 +331,7 @@ decisão vira o `fault_map.yaml` curado à mão na Parte 1.
 | `temperature_f` | Redundante — conversão de °C |
 | `id`, `created_at` | Vazamento — identificadores correlacionados com a ordem de coleta. Ficam como metadado, não como feature |
 
-Restam **17 features numéricas** para o motor de similaridade.
+Restam **16 colunas de medida** para a floresta (`classificacao/colunas.py`).
 
 `rpm` é mantida, mas tratada como **categórica de regime** (5 patamares: 0, 500, 1000,
 2000, 3000) — comparar 500 com 3000 como distância contínua não significa nada físico.

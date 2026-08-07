@@ -244,9 +244,8 @@ Aqui o grupo e o **evento** de `ingestion.construir_eventos`, que quebra em
     st.markdown(
         f"""
 O arquivo tem 23 colunas numericas de medida. Nem todas devem entrar, e as
-exclusoes sao as mesmas que o **motor de similaridade** ja aplica — a funcao e
-literalmente a mesma (`similarity.features.colunas_de_similaridade`), para que
-uma revisao de coluna nao precise ser feita em dois lugares.
+exclusoes moram num lugar so (`classificacao/colunas.py`), com o motivo de cada
+uma escrito ao lado.
         """
     )
 

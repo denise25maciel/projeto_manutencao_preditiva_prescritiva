@@ -89,7 +89,6 @@ with st.sidebar:
 
     st.divider()
     st.header("Busca")
-    k_vizinhos = st.slider("Vizinhos consultados", 5, 100, 25, step=5)
     k_trechos = st.slider("Trechos por resposta", 1, 10, 5)
     #analisar
     if st.session_state.get("sessao"):
@@ -141,40 +140,42 @@ with aba_diagnostico:
             # pratica, e nao em duas telas separadas.
             #
             # Quando vem preenchido, quem decide a familia sao os numeros. Nao e
-            # preferencia: o kNN compara com 166 mil leituras e devolve
-            # evidencia contavel, enquanto a descricao passa por uma busca
-            # semantica que sempre volta com alguma coisa.
-            with st.expander("📈 Tenho a leitura do sensor (opcional)"):
+            # preferencia: a floresta mede o comportamento do trecho, enquanto a
+            # descricao passa por uma busca semantica que sempre volta com
+            # alguma coisa.
+            with st.expander("📈 Tenho as leituras do sensor (opcional)"):
                 st.caption(
-                    "Com a leitura preenchida, **quem decide a familia sao os "
-                    "numeros** — e o resultado dessa comparacao entra na conversa "
-                    "como a primeira fala. Vazio, o sistema decide pela descricao."
+                    "Cole um **trecho** de leituras em CSV. Com ele preenchido, "
+                    "**quem decide a familia sao os numeros**, e o resultado entra "
+                    "na conversa como a primeira fala. Vazio, o sistema decide "
+                    "pela descricao."
                 )
 
                 c_semente, c_botao = st.columns([1, 2])
                 with c_semente:
                     semente_txt = st.number_input(
                         "Sorteio", 0, 9999, 0, step=1, key="txt_semente",
-                        help="Muda qual leitura real do historico e sorteada.",
+                        help="Muda qual trecho real do historico e sorteado.",
                     )
                 with c_botao:
                     st.markdown("&nbsp;")
-                    if st.button("Preencher com um evento real do historico",
+                    if st.button("Preencher com um trecho real do historico",
                                  key="btn_preencher", width="stretch"):
-                        st.session_state["sensor_json"] = json.dumps(
-                            D.r_evento_de_exemplo(None, int(semente_txt)),
-                            indent=2, ensure_ascii=False,
-                        )
+                        exemplo_txt = D.r_trecho_de_exemplo(50, int(semente_txt))
+                        st.session_state["sensor_json"] = exemplo_txt[
+                            D.r_clf_colunas(False) + [D.config.COLUNA_ROTULO]
+                        ].to_csv(index=False)
                         st.rerun()
 
                 st.text_area(
-                    "JSON da leitura do sensor",
+                    "Leituras do sensor (CSV)",
                     key="sensor_json",
                     height=220,
-                    placeholder='{"z_rms_velocity_mm_s": 3.24, "rpm": 1000, ...}',
-                    help="O campo `fault`, se vier, e a anotacao do operador — "
-                         "ela sera confrontada com o que os vizinhos indicarem, "
-                         "nunca obedecida.",
+                    placeholder="z_rms_velocity_mm_s,x_rms_velocity_mm_s,...\n"
+                                "1.09,1.57,...\n1.10,1.56,...",
+                    help="Varias linhas: uma leitura isolada zera quatro das cinco "
+                         "estatisticas. A coluna `fault`, se vier, e a anotacao do "
+                         "operador — sera confrontada, nunca obedecida.",
                 )
 
             if st.button("Procurar o procedimento", type="primary", key="btn_texto"):
@@ -187,31 +188,30 @@ with aba_diagnostico:
                     )
                     st.stop()
 
-                evento = None
+                bloco = None
                 if sensor_txt:
                     try:
-                        evento = json.loads(sensor_txt)
-                    except json.JSONDecodeError as e:
-                        st.error(f"JSON invalido: {e}")
+                        bloco = D.ler_bloco_de_sensor(sensor_txt)
+                    except Exception as e:  # noqa: BLE001 — a mensagem vai para a tela
+                        st.error(f"Nao consegui ler as leituras: {e}")
                         st.stop()
 
-                if evento is not None:
+                if bloco is not None:
                     # --- caminho do sensor -------------------------------------
-                    with st.spinner("Comparando com as 166 mil leituras do historico..."):
-                        diag = D.diagnosticar(evento, k=k_vizinhos)
-                        nova = D.abrir_conversa(evento=evento, diagnostico=diag)
+                    with st.spinner("Classificando o trecho..."):
+                        clf = D.classificar_trecho(bloco)
+                        nova = D.abrir_conversa(classificacao=clf)
 
-                    # O anuncio do resultado entra como FALA, e nao como painel de
-                    # metricas: o tecnico esta lendo uma conversa. Os numeros sao
-                    # os do kNN — o modelo, quando ligado, so os redige, e o G5N
+                    # O anuncio entra como FALA, e nao como painel de metricas: o
+                    # tecnico esta lendo uma conversa. Os numeros sao os da
+                    # floresta — o modelo, quando ligado, so os redige, e o G5N
                     # confere se cada numero escrito foi um numero apurado.
                     with st.spinner("Escrevendo o que os numeros indicam..."):
                         D.classificar_na_conversa(
-                            nova, diag, usar_llm=usar_llm, config_llm=cfg
+                            nova, clf, usar_llm=usar_llm, config_llm=cfg
                         )
 
-                    st.session_state["diagnostico"] = diag
-                    st.session_state["evento"] = evento
+                    st.session_state["diagnostico"] = clf
                 else:
                     # --- caminho por texto -------------------------------------
                     with st.spinner("Procurando nos seis manuais..."):
@@ -227,11 +227,14 @@ with aba_diagnostico:
         with aba_sensor:
             st.markdown(
                 """
-    Quando existe a leitura do sensor, ela entra aqui. O kNN compara os numeros com
-    as 166 mil leituras do historico e indica a falha — sem passar pelo texto.
+    Um **trecho** de leituras do sensor, em CSV. A floresta o resume e indica a
+    falha — sem passar pelo texto.
 
-    O campo `fault` e opcional: se vier preenchido, e a anotacao do operador, que
-    sera **confrontada** com o que os vizinhos indicarem.
+    Precisa de varias linhas: uma leitura isolada zera quatro das cinco
+    estatisticas, e zero variacao e a assinatura de `motor_desligado`.
+
+    A coluna `fault`, se vier, e a anotacao do operador — sera **confrontada**
+    com o que o modelo indicar, nunca obedecida.
     """
             )
 
@@ -247,28 +250,32 @@ with aba_diagnostico:
                     help="Desmarque para ver o sistema decidir sem nenhuma pista.",
                 )
 
-            exemplo = D.r_evento_de_exemplo(None, int(semente))
-            if not manter_fault:
-                exemplo = {k: v for k, v in exemplo.items() if k != "fault"}
+            exemplo = D.r_trecho_de_exemplo(50, int(semente))
+            colunas_exemplo = D.r_clf_colunas(False) + (
+                [D.config.COLUNA_ROTULO] if manter_fault else []
+            )
 
-            texto_json = st.text_area(
-                "JSON do evento", value=json.dumps(exemplo, indent=2, ensure_ascii=False),
+            texto_csv = st.text_area(
+                "Leituras do sensor (CSV)",
+                value=exemplo[colunas_exemplo].to_csv(index=False),
                 height=300,
             )
 
             if st.button("Diagnosticar pelo sensor", key="btn_sensor"):
                 try:
-                    evento = json.loads(texto_json)
-                except json.JSONDecodeError as e:
-                    st.error(f"JSON invalido: {e}")
+                    bloco = D.ler_bloco_de_sensor(texto_csv)
+                except Exception as e:  # noqa: BLE001 — a mensagem vai para a tela
+                    st.error(f"Nao consegui ler as leituras: {e}")
                     st.stop()
 
-                with st.spinner("Comparando com o historico..."):
-                    diag = D.diagnosticar(evento, k=k_vizinhos)
-                    nova = D.abrir_conversa(evento=evento, diagnostico=diag)
+                with st.spinner("Classificando o trecho..."):
+                    clf = D.classificar_trecho(bloco)
+                    nova = D.abrir_conversa(classificacao=clf)
 
-                st.session_state["evento"] = evento
-                st.session_state["diagnostico"] = diag
+                with st.spinner("Escrevendo o que os numeros indicam..."):
+                    D.classificar_na_conversa(nova, clf, usar_llm=usar_llm, config_llm=cfg)
+
+                st.session_state["diagnostico"] = clf
                 st.session_state["sessao"] = nova
                 st.rerun()
 

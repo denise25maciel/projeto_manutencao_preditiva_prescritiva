@@ -2,7 +2,7 @@
 
     TURNO 1 — chega o evento do sensor
       1. validar entrada             G0   codigo
-      2. buscar semelhantes          G1   kNN        (Parte 3, ainda stub)
+      2. classificar o trecho        G1   floresta aleatoria
       3. e defeito?                  G2   catalogo
       4. tem manual?                 G3   catalogo
              |
@@ -58,16 +58,16 @@ MAX_TENTATIVAS = 2
 def abrir_sessao(
     rotulo: str | None = None,
     evento: dict | None = None,
-    diagnostico=None,
+    classificacao=None,
 ) -> Sessao:
     """Roda G0 a G3 e fixa o manual. A entrada pelo **sensor**; a outra e
     `abrir_sessao_por_texto`.
 
-    Quem decide a familia e o `diagnostico`, isto e, o kNN sobre os numeros. O
-    `rotulo` avulso serve so a inspecao manual e aos testes.
+    Quem decide a familia e a `classificacao`, isto e, a floresta sobre o trecho
+    de leituras. O `rotulo` avulso serve so a inspecao manual e aos testes.
 
-    `fault` no JSON e anotacao a conferir, nunca ordem: vale a familia dos
-    vizinhos, e a divergencia vira alerta.
+    `fault` no trecho e anotacao a conferir, nunca ordem: vale a familia que a
+    floresta indica, e a divergencia vira alerta.
     """
     s = Sessao(rotulo=rotulo or "")
 
@@ -79,24 +79,23 @@ def abrir_sessao(
             return s
         s.rotulo = rotulo or evento.get("fault") or ""
 
-    # --- G1: os vizinhos sao proximos o bastante? --------------------------
-    if diagnostico is not None:
-        s.diagnostico = diagnostico
-        s.rotulo = diagnostico.rotulo or s.rotulo
-        v = g.g1_similaridade(diagnostico.distancia_min, diagnostico.limiar_g1)
+    # --- G1: a floresta tem confianca suficiente? --------------------------
+    if classificacao is not None:
+        s.diagnostico = classificacao
+        s.rotulo = classificacao.rotulo_do_operador or s.rotulo
+        v = g.g1_confianca(classificacao.confianca)
     else:
-        v = g.g1_similaridade(None)
+        v = g.g1_confianca(None)
     s.vereditos_abertura.append(v)
     if not v:
         s.motivo = v.mensagem
         return s
 
     # --- G2 e G3: catalogo, nao similaridade -------------------------------
-    # A familia vem do kNN quando ha diagnostico; do catalogo quando a sessao
-    # foi aberta por rotulo.
-    #Analise
-    if diagnostico is not None and diagnostico.familia:
-        s.familia = diagnostico.familia
+    # A familia vem da floresta quando ha classificacao; do catalogo quando a
+    # sessao foi aberta por rotulo.
+    if classificacao is not None and classificacao.familia:
+        s.familia = classificacao.familia
     else:
         s.familia = verificar_existencia_conserto(s.rotulo).familia
 
@@ -581,7 +580,7 @@ def _trechos_de_abertura(sessao: Sessao, k: int, motor=None) -> list:
 # --------------------------------------------------------------------------
 
 
-def fatos_do_diagnostico(diagnostico) -> dict:
+def fatos_da_classificacao(classificacao) -> dict:
     """O que o kNN apurou, com as chaves escritas por extenso.
 
     As chaves viram o vocabulario da frase que o modelo escreve: com
@@ -590,36 +589,31 @@ def fatos_do_diagnostico(diagnostico) -> dict:
     como lista de numeros permitidos, entao o que nao estiver aqui nao pode
     aparecer na resposta.
     """
-    if diagnostico is None:
+    if classificacao is None:
         return {}
 
     fatos: dict = {
-        "familia indicada": diagnostico.familia or "indefinida",
-        "vizinhos consultados": diagnostico.k,
-        "vizinhos que votaram nessa familia": diagnostico.votos,
-        "confianca": diagnostico.confianca,
-        "ocorrencias parecidas no historico": diagnostico.n_episodios,
-        "distancia do vizinho mais proximo": round(diagnostico.distancia_min, 3),
+        "familia indicada": classificacao.familia or "indefinida",
+        "confianca": classificacao.confianca,
+        "leituras analisadas": classificacao.n_leituras,
+        "janelas resumidas": classificacao.n_janelas,
     }
-
-    if (rpm := diagnostico.rpm_predominante) is not None:
-        fatos["rotacao predominante dos vizinhos (rpm)"] = rpm
 
     # A anotacao do operador entra por ultimo e so quando existe: ela e o unico
     # fato que pode CONTRARIAR os outros, e o prompt manda destacar isso.
-    if diagnostico.familia_do_operador:
-        fatos["familia anotada pelo operador"] = diagnostico.familia_do_operador
+    if classificacao.familia_do_operador:
+        fatos["familia anotada pelo operador"] = classificacao.familia_do_operador
 
     return fatos
 
 
 def turno_de_classificacao(
-    sessao: Sessao, diagnostico=None, cliente=None, sistema: str | None = None
+    sessao: Sessao, classificacao=None, cliente=None, sistema: str | None = None
 ) -> Turno | None:
     """A classificacao do evento entra na conversa como fala, nao como painel.
 
-    **O modelo nao classifica.** Quando este no roda, o kNN ja comparou o evento
-    com o historico, ja votou por familia e ja mediu a distancia. O que se pede
+    **O modelo de linguagem nao classifica.** Quando este no roda, a floresta ja
+    resumiu o trecho e ja devolveu a familia com a confianca. O que se pede
     ao modelo e uma frase sobre fatos fechados — e o **G5N** confere depois se
     cada numero escrito foi um numero apurado.
 
@@ -631,11 +625,11 @@ def turno_de_classificacao(
     o trabalho e feito: primeiro o que a maquina mostrou, depois o que o
     procedimento manda fazer.
     """
-    if diagnostico is None:
+    if classificacao is None:
         return None
 
     t0 = time.time()
-    fatos = fatos_do_diagnostico(diagnostico)
+    fatos = fatos_da_classificacao(classificacao)
 
     turno = Turno(pergunta="")
     turno.abertura = True
