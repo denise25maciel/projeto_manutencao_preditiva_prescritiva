@@ -89,7 +89,8 @@ with st.sidebar:
 
     st.divider()
     st.header("Busca")
-    k_trechos = st.slider("Trechos por resposta", 1, 10, 5)
+    #Analisar
+    k_trechos = 5
     #analisar
     if st.session_state.get("sessao"):
         st.divider()
@@ -376,28 +377,6 @@ with aba_diagnostico:
                         sessao, resposta, k=8, usar_llm=usar_llm, config_llm=cfg
                     )
                 st.rerun()
-
-            with st.expander("Por que a lista em vez de escolher o melhor"):
-                st.markdown(
-                    """
-    `documento_predominante` e um `max`: **sempre** ha um vencedor, mesmo com 1,43
-    contra 1,39. Era assim que uma descricao ampla travava num manual por acaso — e,
-    uma vez travado, o manual nao muda mais durante a conversa.
-
-    O **G1T** exige duas coisas antes de travar: **margem** (ganhou do 2o) e
-    **share** (concentra a evidencia). A segunda pega o caso que a primeira nao ve —
-    pesos [1,0; 0,5; 0,5; 0,5; 0,5] tem margem folgada e ainda deixam quatro manuais
-    de pe. Reprovar aqui nao e recusa: e passar a decisao para voce.
-
-    **Nao ha rodada de investigacao.** O sistema nao gasta perguntas antes de
-    mostrar a lista, porque quem esta na maquina costuma reconhecer o defeito assim
-    que le os trechos. Detalhar continua valendo, quantas vezes quiser — se a margem
-    abrir, o sistema trava sozinho e a lista some.
-
-    Nenhum modelo participa desta tela: o ranking e busca vetorial, o empate e um
-    `if`, os nomes vem do `fault_map.yaml` e a decisao final e sua.
-    """
-                )
 
             st.stop()
 
